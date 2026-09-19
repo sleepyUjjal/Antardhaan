@@ -15,7 +15,7 @@ Three surfaces, one visual language:
 |---|---|---|---|
 | Landing | `/` | Everyone | Sets the theme. Decoy. No links to chambers. |
 | Chambers | `/c/<slug>` ×5 | Participants who were handed the URL | Enter team name + suit code → timestamp recorded |
-| Admin | `/admin/*` | You, on your phone | Start time, suit codes, hidden slugs, leaderboards, CSV export |
+| Admin | `/admin/*` | You, on your phone | Start time, the glitch controller, suit codes, hidden slugs, leaderboards, CSV export |
 
 ### Confirmed decisions
 
@@ -55,6 +55,7 @@ create table event (
   id                integer     primary key default 1,
   start_time        timestamptz not null default now(),
   submissions_open  boolean     not null default true,
+  glitch            jsonb       not null default '{}'::jsonb,  -- partial override (C12)
   updated_at        timestamptz not null default now(),
   constraint event_singleton check (id = 1)
 );
@@ -100,6 +101,7 @@ At realistic volume — 300 teams × 5 suits = 1,500 rows — every one of these
 - `unique (suit, team_slug)` is the correctness backbone: a team's first solve is its only solve. A re-submission hits the constraint and the UI responds with the *original* timestamp rather than an error — "already recorded at 21:14:03". This also makes the submit action safely idempotent, which matters when 500 people on flaky wifi double-tap the button.
 - No `elapsed_ms` column, deliberately. Elapsed time is derived at read time (§6).
 - No `ip_hash`, no `user_agent`, no attempt log. The only thing stored about a participant is the team name they typed. That is both simpler and a cleaner privacy position.
+- `event.glitch` is a **partial** override of `TUNING_DEFAULTS` (C12), not a copy of them. `{}` means "whatever the build says", which is what lets a knob added in a later commit work with no backfill, and lets an edit to `TUNING_DEFAULTS` still reach every device that has not overridden it. It is jsonb rather than a column per knob because the knob set changes during rehearsal, and a migration per idea is the wrong tax for that. One column on a one-row table — and every value in it is clamped and allowlisted before it can reach a client.
 - The Drizzle schema is the source of truth. Two details need care in JS: `pgEnum` for `suit_key`, and the singleton check on `event`, which is either `check('event_singleton', sql\`id = 1\`)` in a recent `drizzle-orm`, or a hand-added line in the generated migration.
 
 ```js
@@ -130,10 +132,12 @@ export const submissions = pgTable('submissions', {
 | `/c/[slug]` | dynamic | Looks up slug in `suits`. Unknown slug → `notFound()` → themed decoy 404. Never reveals whether a slug exists. |
 | `/c/[slug]` (action) | Server Action | The submission. Validated, code-checked, insert-or-conflict. |
 | `/admin/login` | static + action | Password → signed cookie. |
-| `/admin` | dynamic, guarded | Start time, stat cards. |
+| `/admin` | dynamic, guarded | Start time, stat cards, the active-hold banner. |
+| `/admin/glitch` | dynamic, guarded | The controller: knobs, presets, hold. Publishes to `event.glitch`. |
 | `/admin/suits` | dynamic, guarded | Codes + slugs. |
 | `/admin/leaderboards` | dynamic, guarded | Per-suit tabs + overall standings. |
 | `/admin/export.csv` | route handler, guarded | Full submission log, CSV. |
+| `/api/glitch` | route handler | Tuning JSON for every client, clamped. Edge-cached, 60 s. |
 | `/api/leaderboard` | route handler | JSON for polling. Edge-cached (§9). |
 | `/standings` | static shell + client fetch | Public board for the venue screen. |
 | `/robots.txt` | static | `Disallow: /`. |
@@ -162,9 +166,19 @@ Two ideas carry the whole look:
   --color-ash:        #7A7772;  /* muted text */
 }
 
-:root[data-mode="good"] { --bg: var(--color-paper); --fg: var(--color-ink);   --rule: #CFC9BF; }
-:root[data-mode="bad"]  { --bg: var(--color-ink);   --fg: var(--color-paper); --rule: #221F20; }
+:root {
+  --bg: var(--color-ink);   --fg: var(--color-paper);  --rule: #221F20;  /* bad is the default */
+  --muted: #8A8681;              /* quiet text on ink       — 5.5:1 */
+  --accent-text: #C4576A;        /* the accent as foreground — 4.6:1 */
+}
+:root[data-mode="good"] {
+  --bg: var(--color-paper); --fg: var(--color-ink);    --rule: #CFC9BF;
+  --muted: #5F5C58;              /* 5.8:1 on paper */
+  --accent-text: var(--color-maroon);  /* 9.6:1 on paper */
+}
 ```
+
+**Why `--accent-text` and `--muted` exist at all.** Maroon is a good *background* and a good *rule* in both modes, but it is only a good *foreground* on paper. Maroon on ink measures **1.8:1** — not "low contrast", effectively invisible, and it is the assumption of ~3.4:1 in the first draft of this section that hid it. So the accent splits in two: `--accent`/`--accent-hot` keep doing fills, hairlines and button grounds, and `--accent-text` carries the accent when it *is* the text — true maroon on paper, a lightened `#C4576A` on ink. The same reasoning gives `--muted` a value per mode: ash lands at 3.8:1 on paper, under AA for the small mono lines it is used on. The focus ring uses `--accent-text` too, because a focus indicator needs 3:1 against the page behind it and a maroon ring on ink does not have it.
 
 Why bone and void rather than `#fff`/`#000`: pure white inverting to pure black at high frequency is physically punishing to read. Off-white and off-black hold ~18:1 contrast while surviving a full evening of flipping.
 
@@ -206,7 +220,7 @@ Discipline that keeps it from becoming a migraine — and from cooking a phone b
 - Only `transform` and `opacity` animate. The grain is a static SVG stepped by CSS — no canvas loop, no `requestAnimationFrame`, no per-frame JS.
 - The oscillator pauses on `visibilitychange`. 500 phones with the page backgrounded should not be animating.
 - **`prefers-reduced-motion: reduce` stops the oscillator entirely.** The page locks to `bad` mode with a static maroon-edged composition: no flips, no tear, no grain, no scramble. This is not optional — someone at the venue will have vestibular sensitivity, and a page that strobes is genuinely hostile to them.
-- Maroon never carries body text. On ink it lands at ~3.4:1 — fine for large decorative type and card edges, not fine for a paragraph.
+- Maroon never carries body text, in either mode. It is a fill, a rule and a background; where the accent has to be the text it goes through `--accent-text` above, which is the only accent value that is legible on ink.
 
 ---
 
@@ -367,6 +381,7 @@ Each commit builds, deploys, and leaves the site in a coherent state. Commit mes
 - `/dev/glitch`: live controls for flip interval, tear duration and layer opacity, plus a forced flip. The opaque knobs are written out as `--glitch-*` custom properties by the provider, so retuning on the venue projector needs no redeploy; copy the values back into `TUNING_DEFAULTS` to make them permanent.
   - **The device-width preview frame is cut.** The overlays are `position: fixed` to the real viewport, so a fake frame inside the page would render them wrong and teach you the wrong thing. Use real device emulation instead.
   - The page reads the *root* provider rather than mounting its own; two providers would both write `data-mode` on `<html>` and fight over it.
+  - This route is a bench, not a product surface — it is public and unauthenticated. C12 deletes it and replaces it with the authenticated controller that persists what you set.
 
 **Done when:** `/dev/glitch` flips continuously with no layout shift, no console errors, and no dropped frames on a 4× CPU throttle.
 
@@ -376,12 +391,18 @@ Each commit builds, deploys, and leaves the site in a coherent state. Commit mes
 
 **Goal:** the front door. Sets the theme, tells you nothing useful.
 
-**Files:** `app/page.jsx`, `components/landing/{Hero,EventMeta,Footer}.jsx`, `app/opengraph-image.jsx`, `app/icon.svg`
+**Files:** `app/page.jsx`, `components/landing/{Hero,EventMeta,Footer}.jsx`, `lib/suits.js`, `app/opengraph-image.jsx`, `app/icon.svg`, `app/layout.jsx` (metadata)
 
-- Anton lockup of ANTARDHAAN with the scramble on mount; `MRIDANG 2K26` in maroon mono. Sized with `clamp(3rem, 15vw, 9rem)` so it fills a phone without overflowing.
-- Heavy negative space, a single maroon hairline rule, the suit glyphs as faint background marks — motif, not navigation.
-- **No links to chambers.** No sitemap entry, no prefetch, no manifest reference.
-- OG image generated from the same tokens, so a shared link looks like the site.
+- Anton lockup of ANTARDHAAN, scrambled on mount, sized by `--text-display` (`clamp(3rem, 15vw, 9rem)`) so it fills a phone without overflowing. `MRIDANG 2K26` in `text-accent-text` mono.
+- Heavy negative space, a single maroon hairline rule, and the five suit glyphs as faint background marks. `lib/suits.js` is created here rather than in C6: the landing page is the first thing that needs a glyph, and two copies of the suit list would be worse than moving the file's first commit.
+- **The suit marks are placed by hand, not generated from an index.** A generated row of five would read as navigation, and nothing on this page navigates. Geometry lives in an inline style — literal values, so Tailwind would find them either way, but the inline object keeps the composition readable and sidesteps the source-text scanning trap (C2).
+- **`overflow-hidden` on the hero is load-bearing, not tidiness.** The glyphs are offset past all four edges on purpose and ANTARDHAAN is a single unbreakable word; either one would widen the document and give a phone horizontal scroll. Clipping is what makes the mark bleed off the page instead of stretching it.
+- The `<h1>` carries `aria-label` of the real word. The scramble changes the text content for its first 700 ms, and without the label a screen reader reading in that window reads glyphs.
+- **No links to chambers.** No sitemap entry, no prefetch, no manifest reference. The landing page has no links at all.
+- OG image from the same tokens, so a shared link looks like the site. Two things to know about it:
+  - It is **permanently in bad mode.** A mode that flips every few seconds has no frame to freeze, and the void ground is the one that reads on both a light and a dark timeline.
+  - `next/font` self-hosts Anton as **woff2, which satori cannot read**, so the route fetches the TTF separately — inside a `try`/`catch`. The route is prerendered at build time, so an unguarded fetch would let a network blip break the build; losing the custom face is the acceptable failure.
+- `metadataBase` is set from `NEXT_PUBLIC_SITE_URL` in `app/layout.jsx`, falling back to localhost rather than throwing. The consequence is worth stating: **if that var is not set in Vercel before the production build, the deployed OG tags point at localhost.**
 
 **Done when:** it looks intentional in both modes at 375 px and 1440 px, nothing overflows horizontally on a narrow phone, and searching the DOM/source for any slug returns nothing.
 
@@ -397,6 +418,7 @@ Each commit builds, deploys, and leaves the site in a coherent state. Commit mes
 - `neon-http` driver over the pooled connection string.
 - `lib/env.js`: read and check the four env vars once at boot, throwing a readable error if one is missing — so a misconfiguration surfaces immediately rather than as a 500 mid-event.
 - Migration seeds the `event` row (start time = now) and five `suits` rows with placeholder slugs and codes.
+- `event.glitch` (jsonb, default `{}`) is created with the table here; C12 is the only thing that ever writes to it.
 
 **Done when:** `npm run db:migrate` applies cleanly, `npm run db:studio` shows the three tables with their indexes, inserting a duplicate `(suit, team_slug)` is rejected, and `explain analyze` on the per-suit leaderboard query shows an index scan rather than a sort.
 
@@ -407,6 +429,8 @@ Each commit builds, deploys, and leaves the site in a coherent state. Commit mes
 **Goal:** the pure logic, tested before anything calls it.
 
 **Files:** `lib/suits.js`, `lib/team.js`, `lib/code.js`, `lib/team.test.js`, `vitest.config.mjs`
+
+- `suits.js` already exists from C4 — it was created there because the landing page is the first thing that needs a glyph, and shipping a second copy of the suit list would be worse than moving the file's first commit. C6 adds the normalization and code modules alongside it.
 
 - `suits.js`: the `SUITS` map — `label`, `glyph`, display order. Visuals live here, not in the database.
 - `team.js`: `normalizeTeamName` → `team_slug`. Strip punctuation, collapse whitespace, lowercase, NFD-normalize accents. Reject empty-after-normalization and names over 40 characters.
@@ -491,7 +515,29 @@ This is the one place a test earns its keep: a normalization bug doesn't crash a
 
 ---
 
-### C12 — `feat(admin): suit codes and hidden slugs`
+### C12 — `feat(admin): the glitch controller`
+
+**Goal:** the effect stops being a property of the build and becomes something you can dial from your phone at the venue, with the whole room picking it up.
+
+**Files:** `app/admin/glitch/{page,actions}.jsx`, `components/admin/GlitchKnobs.jsx`, `app/api/glitch/route.js`, `components/glitch/GlitchProvider.jsx`, `lib/glitch.js`, `lib/glitch.test.js`, `app/admin/page.jsx` (the active-hold banner), and `/dev/glitch` is deleted
+
+- **This is C3's `/dev/glitch` panel promoted into the admin and made to persist.** The knobs are the same; what changes is that they no longer live and die in React state. `/dev/glitch` is deleted in this commit — it was a public route with no auth, and keeping a second copy of the same controls is a maintenance tax with no upside.
+- The value is a partial override in `event.glitch` (jsonb, §3). `{}` means "use the build defaults", so **Reset writes `{}`, not a copy of the defaults** — that is the entire reason it is a partial override rather than a snapshot. A knob added in a later commit needs no backfill, and an edit to `TUNING_DEFAULTS` still reaches every device that has not overridden it.
+- **`sanitizeTuning(input)` in `lib/glitch.js` is the security boundary of this commit.** It is the point where a jsonb value becomes a CSS custom property on every visitor's device: an allowlist of known keys, each clamped to its range, everything else dropped. Apply it on write *and* on read — the read side is what stops one bad row from reaching 500 phones at once. `lib/glitch.test.js` covers clamping, unknown-key rejection, and non-numeric input.
+- `/api/glitch` serves tuning only — never a code, never a slug — with `Cache-Control: public, max-age=60, s-maxage=60, stale-while-revalidate=300`. `max-age` as well as `s-maxage` so a repeat navigation is a browser cache hit and costs nothing at all.
+- The provider fetches once on mount and merges. It paints with `TUNING_DEFAULTS` first, so first paint stays identical between server and client and nothing is blocked on the fetch; the override lands a few hundred ms later, which is invisible for opacity knobs. Two rules:
+  - **The fetch must not stomp a local edit.** Adopt the remote value only while the tuning is still the initial one. Without that guard, an in-flight response silently reverts whatever you just dragged.
+  - **This is a deliberate exception to §9's one-round-trip rule.** That rule is about *server-side* round trips to Neon in Singapore. This is one client-side request to Vercel's edge, cached, non-blocking — and it is what makes "publish" mean anything.
+- **A hold.** `hold: null | 'good' | 'bad'` rides in the same blob so the flip can be frozen globally: for reading the rules out, or when the projector is struggling with it. The provider gains it as a third input alongside reduced-motion and tab-visibility.
+  - **A global freeze you have forgotten about looks exactly like a bug**, so `/admin` shows a banner while one is active, with the release on the banner itself.
+- **`prefers-reduced-motion` still wins over everything** — a published preset, a hold, anything. The oscillator's own media-query check remains the last word; a global control must never be able to take that away.
+- Presets: Rehearsal (the defaults), Showtime, Calm. Copying the numbers back into `TUNING_DEFAULTS` is what makes one permanent.
+
+**Done when:** publishing a change moves the effect on a second device within a minute with no redeploy, a hold survives a reload, and reduced motion still overrides a published Showtime preset.
+
+---
+
+### C13 — `feat(admin): suit codes and hidden slugs`
 
 **Files:** `app/admin/suits/{page,actions}.jsx`, `components/admin/SuitCard.jsx`
 
@@ -505,7 +551,7 @@ This is the one place a test earns its keep: a normalization bug doesn't crash a
 
 ---
 
-### C13 — `feat(admin): leaderboards, overall standings, and CSV export`
+### C14 — `feat(admin): leaderboards, overall standings, and CSV export`
 
 **Files:** `app/admin/leaderboards/page.jsx`, `components/admin/{SuitTabs,LeaderList,TeamTimeline}.jsx`, `app/admin/export.csv/route.js`, `lib/leaderboard.js`
 
@@ -520,7 +566,7 @@ This is the one place a test earns its keep: a normalization bug doesn't crash a
 
 ---
 
-### C14 — `feat(live): auto-refreshing boards and the public standings screen`
+### C15 — `feat(live): auto-refreshing boards and the public standings screen`
 
 **Files:** `app/api/leaderboard/route.js`, `components/useLiveBoard.js`, `app/standings/page.jsx`
 
@@ -532,7 +578,7 @@ This is the one place a test earns its keep: a normalization bug doesn't crash a
 
 ---
 
-### C15 — `feat(polish): mobile pass, accessibility, and the decoy 404`
+### C16 — `feat(polish): mobile pass, accessibility, and the decoy 404`
 
 **Files:** assorted components, `app/not-found.jsx`, `app/{loading,error}.jsx`
 
@@ -540,12 +586,13 @@ This is the one place a test earns its keep: a normalization bug doesn't crash a
 - The perf budget: total JS under ~120 KB gzipped on the chamber route, no long tasks during a mode flip, and a submission round trip that stays under a second on throttled 4G.
 - Accessibility: `prefers-reduced-motion` verified end to end, `aria-live` on results, focus management on submit, labelled inputs, `:focus-visible` rings at 3:1 against both modes, and `:active` states everywhere a `:hover` would have been.
 - Loading and error boundaries, plus a readable screen for a missing env var and for an unreachable database — the two failures most likely to happen at the worst moment.
+- **Delete `app/dev/`.** `/dev/glitch` goes in C12; `/dev/theme` is a C2 scratch page that by now has no reason to be reachable in production. Neither leaks anything, but a public route into the machinery is untidy and free to remove.
 
 **Done when:** Lighthouse mobile ≥ 90 performance and ≥ 95 accessibility on `/`, `/c/<slug>`, and `/admin`, and a full keyboard-only submission succeeds.
 
 ---
 
-### C16 — `chore(deploy): Vercel, Neon, load test, and the runbook`
+### C17 — `chore(deploy): Vercel, Neon, load test, and the runbook`
 
 **Files:** `README.md`, `scripts/{seed,export}.js`, `docs/runbook.md`, `vercel.json`
 
@@ -559,7 +606,7 @@ This is the one place a test earns its keep: a normalization bug doesn't crash a
 
 ---
 
-### C17 — `docs: finalise README and hand-off notes`
+### C18 — `docs: finalise README and hand-off notes`
 
 **Files:** `README.md`, `implementation.md`
 
@@ -574,27 +621,28 @@ This is the one place a test earns its keep: a normalization bug doesn't crash a
 
 ```
 C1 → C2 → C3 → C4 ─┐
-                    ├─→ C8 → C9 → C15 ─┐
-       C5 → C6 → C7 ─┘                  ├─→ C16 → C17
-                    C10 → C11 → C12 → C13 → C14 ─┘
+                    ├─→ C8 → C9 → C16 ─┐
+       C5 → C6 → C7 ─┘                  ├─→ C17 → C18
+                    C10 → C11 → C12 → C13 → C14 → C15 ─┘
 ```
 
 - **C1–C4** are the visual foundation and need no database.
 - **C5–C7** are the data path; C8 depends on C7, and C6 is testable in isolation.
-- **C10–C14** are the admin side and are independent of C8 — parallelizable if you have a second pair of hands.
-- **C15** lands last among features, because it polishes everything above it.
+- **C10–C15** are the admin side and are independent of C8 — parallelizable if you have a second pair of hands. C12 is the one admin commit with a dependency outside the group: it needs C5's `event.glitch` column.
+- **C16** lands last among features, because it polishes everything above it.
 
 ## 12. Risks
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| Glitch effect stutters or drains battery on mid-range Android | High — it's the whole aesthetic, on the device most people will use | Mobile layer budget and `visibilitychange` pause (C3); throttle-test at 4× CPU and on a real mid-range phone (C15) |
+| Glitch effect stutters or drains battery on mid-range Android | High — it's the whole aesthetic, on the device most people will use | Mobile layer budget and `visibilitychange` pause (C3); throttle-test at 4× CPU and on a real mid-range phone (C16) |
 | A slug or code leaks into the client bundle | High — the game is over on night one | Codes compared server-side only; C9 greps the build output for both |
+| A published glitch override breaks the effect on every device at once | Medium — it is now a global control, not a local one | Every value is allowlisted and clamped before it is stored *and* before it is served (C12); `prefers-reduced-motion` still overrides it; `/admin` shows a banner while a hold is active |
 | The leaderboard splits one team into two rows | Medium — visible and embarrassing | `team_slug` normalization with tests (C6), `unique(suit, team_slug)` as the backstop |
-| Polling fan-out from 500 phones | Medium — could hammer the database | Edge-cached endpoint with `s-maxage` (C9, §9); verify against the Neon query log (C14) |
+| Polling fan-out from 500 phones | Medium — could hammer the database | Edge-cached endpoint with `s-maxage` (§9, built in C15); verify against the Neon query log |
 | Neon cold start on the first submission | Low | Pooled endpoint; send a test submission before the event opens |
 | Start time typed wrong | Low | Elapsed times are derived in SQL, so fixing it re-ranks instantly with no data migration |
-| Admin panel unusable on a phone at the venue | Medium — it's your only view of the event | Card layouts rather than tables on mobile (C13); the whole admin surface is built mobile-first and checked on a real device (C15) |
+| Admin panel unusable on a phone at the venue | Medium — it's your only view of the event | Card layouts rather than tables on mobile (C14); the whole admin surface is built mobile-first and checked on a real device (C16) |
 
 ---
 
@@ -602,6 +650,8 @@ C1 → C2 → C3 → C4 ─┐
 
 1. **Joker scoring.** Should the Joker chamber count as a fifth suit for standings, or as a bonus/multiplier? The plan treats it as a standard fifth suit — trivially changed in `lib/leaderboard.js`.
 2. **Overall tie-break.** Currently most suits solved, then least total elapsed. If you'd rather weight by suit difficulty, that's a small change in one query.
-3. **Public standings.** C14 builds `/standings`. Say the word and it comes out, or gets put behind a code.
+3. **Public standings.** C15 builds `/standings`. Say the word and it comes out, or gets put behind a code.
 4. **Repeat visits.** A team can solve each suit once. If chambers should be re-enterable, the unique constraint is the one thing to revisit.
-5. **Codes from physical clue cards.** If codes are printed before the site is built, C12 needs a "type an existing code" path alongside generate.
+5. **Codes from physical clue cards.** If codes are printed before the site is built, C13 needs a "type an existing code" path alongside generate.
+6. **Landing copy.** `META.tagline` in `components/landing/EventMeta.jsx` is a placeholder — *"What disappears does not always leave."* — and the landing page carries no date and no venue. Both are one-line edits in one object, and both are deliberate: inventing a date would have been worse than leaving it out.
+7. **How far the glitch controller reaches.** C12 publishes tuning to every device via `/api/glitch`. If you would rather each device kept its own settings, the endpoint and the fetch come out and it stays a local bench — but the `hold` is the part that genuinely has to be global, so that half stays either way.

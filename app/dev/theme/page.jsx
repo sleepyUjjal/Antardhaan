@@ -32,7 +32,7 @@ function Swatch({ name }) {
   return (
     <div className="flex flex-col gap-2">
       <div className="h-14 w-full border border-rule" style={{ background: `var(--${name})` }} />
-      <span className="font-mono text-sm text-ash">--{name}</span>
+      <span className="font-mono text-sm text-muted">--{name}</span>
     </div>
   )
 }
@@ -48,7 +48,7 @@ export default function ThemeDevPage() {
       <Stack gap="xl">
         <header>
           <h1 className="font-display text-4xl uppercase">Token scratch</h1>
-          <p className="mt-2 text-sm text-ash">
+          <p className="mt-2 text-sm text-muted">
             C2 verification page. Swap modes, check both, and focus the inputs on a real phone to
             confirm the page does not zoom.
           </p>
@@ -57,7 +57,7 @@ export default function ThemeDevPage() {
         <Rule tone="accent" />
 
         <section>
-          <h2 className="font-mono text-sm tracking-[0.15em] text-ash uppercase">Mode</h2>
+          <h2 className="font-mono text-sm tracking-[0.15em] text-muted uppercase">Mode</h2>
           <div className="mt-4 flex gap-3">
             <Button variant={mode === 'good' ? 'primary' : 'ghost'} onClick={() => setMode('good')}>
               Good
@@ -69,8 +69,8 @@ export default function ThemeDevPage() {
         </section>
 
         <section>
-          <h2 className="font-mono text-sm tracking-[0.15em] text-ash uppercase">Palette</h2>
-          <p className="mt-2 text-sm text-ash">These must stay put when the mode flips.</p>
+          <h2 className="font-mono text-sm tracking-[0.15em] text-muted uppercase">Palette</h2>
+          <p className="mt-2 text-sm text-muted">These must stay put when the mode flips.</p>
           <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3">
             {PALETTE.map((name) => (
               <Swatch key={name} name={name} />
@@ -79,8 +79,8 @@ export default function ThemeDevPage() {
         </section>
 
         <section>
-          <h2 className="font-mono text-sm tracking-[0.15em] text-ash uppercase">Semantic</h2>
-          <p className="mt-2 text-sm text-ash">
+          <h2 className="font-mono text-sm tracking-[0.15em] text-muted uppercase">Semantic</h2>
+          <p className="mt-2 text-sm text-muted">
             These must change when the mode flips. Nothing else on the site names a palette colour.
           </p>
           <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3">
@@ -91,16 +91,16 @@ export default function ThemeDevPage() {
         </section>
 
         <section>
-          <h2 className="font-mono text-sm tracking-[0.15em] text-ash uppercase">Type scale</h2>
+          <h2 className="font-mono text-sm tracking-[0.15em] text-muted uppercase">Type scale</h2>
           <div className="mt-4 space-y-3">
             {SCALE.map(({ label, cls }) => (
               <div key={label} className="flex items-baseline gap-4">
-                <span className="w-16 shrink-0 font-mono text-sm text-ash">{label}</span>
+                <span className="w-16 shrink-0 font-mono text-sm text-muted">{label}</span>
                 <span className={cn('truncate', cls)}>Antardhaan</span>
               </div>
             ))}
           </div>
-          <p className="mt-4 text-sm text-ash">
+          <p className="mt-4 text-sm text-muted">
             Body copy is Archivo. Maroon carries no paragraphs on ink — it lands at ~3.4:1, which is
             fine for rules and large decorative type and not fine for body text.
           </p>
@@ -108,23 +108,23 @@ export default function ThemeDevPage() {
         </section>
 
         <section>
-          <h2 className="font-mono text-sm tracking-[0.15em] text-ash uppercase">Controls</h2>
+          <h2 className="font-mono text-sm tracking-[0.15em] text-muted uppercase">Controls</h2>
           <div className="mt-4 grid gap-3 sm:max-w-md">
             <Button>Primary action</Button>
             <Button variant="ghost">Secondary action</Button>
             <Button disabled>Disabled</Button>
           </div>
           <div className="mt-6 grid gap-3 sm:max-w-md">
-            <label className="font-mono text-sm text-ash" htmlFor="team">
+            <label className="font-mono text-sm text-muted" htmlFor="team">
               Team name
             </label>
             <input
               id="team"
-              className="min-h-[52px] w-full border border-rule bg-transparent px-4 text-fg placeholder:text-ash"
+              className="min-h-[52px] w-full border border-rule bg-transparent px-4 text-fg placeholder:text-muted"
               placeholder="Team Vortex"
               autoComplete="off"
             />
-            <label className="font-mono text-sm text-ash" htmlFor="code">
+            <label className="font-mono text-sm text-muted" htmlFor="code">
               Code
             </label>
             <input
@@ -140,7 +140,7 @@ export default function ThemeDevPage() {
         </section>
 
         <Rule />
-        <p className="pb-[env(safe-area-inset-bottom)] font-mono text-sm text-ash">
+        <p className="pb-[env(safe-area-inset-bottom)] font-mono text-sm text-muted">
           Safe-area padding applies here — on a notched phone this clears the home bar.
         </p>
       </Stack>

@@ -1,11 +1,20 @@
-// Placeholder. The real landing page is commit C4.
+import { EventMeta } from '@/components/landing/EventMeta'
+import { Footer } from '@/components/landing/Footer'
+import { Hero } from '@/components/landing/Hero'
+
+/**
+ * The front door: sets the theme and tells you nothing useful.
+ *
+ * No links, no chamber slugs, no mention that five chambers exist (§4). Hero is
+ * flex-1 and absorbs the slack, which is what puts the lockup high and leaves
+ * the meta and footer sitting on the bottom edge.
+ */
 export default function Home() {
   return (
-    <main className="grid min-h-dvh place-items-center p-6">
-      <div className="text-center">
-        <h1 className="text-4xl font-bold tracking-tight">ANTARDHAAN</h1>
-        <p className="mt-2 text-sm opacity-60">Bootstrap complete. Landing page lands in C4.</p>
-      </div>
+    <main className="flex min-h-dvh flex-col">
+      <Hero />
+      <EventMeta />
+      <Footer />
     </main>
   )
 }

@@ -27,7 +27,7 @@ const KNOBS = [
 function Readout({ label, value }) {
   return (
     <div className="flex items-baseline justify-between gap-4 border-b border-rule py-2">
-      <span className="font-mono text-sm text-ash">{label}</span>
+      <span className="font-mono text-sm text-muted">{label}</span>
       <span className="font-mono text-sm">{value}</span>
     </div>
   )
@@ -55,7 +55,7 @@ export default function GlitchDevPage() {
           <GlitchText as="h1" className="font-display text-4xl uppercase">
             Glitch control
           </GlitchText>
-          <p className="mt-2 text-sm text-ash">
+          <p className="mt-2 text-sm text-muted">
             C3 verification page. Tap the heading to tear it manually. Tune the knobs here on the
             venue hardware, then copy the values into TUNING_DEFAULTS.
           </p>
@@ -64,14 +64,14 @@ export default function GlitchDevPage() {
         <Rule tone="accent" />
 
         <section>
-          <h2 className="font-mono text-sm tracking-[0.15em] text-ash uppercase">State</h2>
+          <h2 className="font-mono text-sm tracking-[0.15em] text-muted uppercase">State</h2>
           <div className="mt-2">
             <Readout label="mode" value={mode} />
             <Readout label="oscillator" value={active ? 'running' : 'stopped'} />
             <Readout label="prefers-reduced-motion" value={reducedMotion ? 'yes' : 'no'} />
             <Readout label="tab hidden" value={paused ? 'yes' : 'no'} />
           </div>
-          <p className="mt-3 text-sm text-ash">
+          <p className="mt-3 text-sm text-muted">
             Under reduced motion the oscillator stops and the page locks to bad. The CSS rule in
             globals.css cannot do that on its own — the flip is an attribute change, not an
             animation — which is why it is handled in the provider.
@@ -90,12 +90,12 @@ export default function GlitchDevPage() {
         </section>
 
         <section>
-          <h2 className="font-mono text-sm tracking-[0.15em] text-ash uppercase">Tuning</h2>
+          <h2 className="font-mono text-sm tracking-[0.15em] text-muted uppercase">Tuning</h2>
           <div className="mt-4 grid gap-5 sm:max-w-lg">
             {KNOBS.map(({ key, label, min, max, step, unit }) => (
               <label key={key} className="grid gap-2">
                 <span className="flex items-baseline justify-between font-mono text-sm">
-                  <span className="text-ash">{label}</span>
+                  <span className="text-muted">{label}</span>
                   <span>
                     {tuning[key]}
                     {unit}
@@ -123,16 +123,16 @@ export default function GlitchDevPage() {
         </section>
 
         <section>
-          <h2 className="font-mono text-sm tracking-[0.15em] text-ash uppercase">Scramble</h2>
+          <h2 className="font-mono text-sm tracking-[0.15em] text-muted uppercase">Scramble</h2>
           <p className="mt-2 font-display text-5xl uppercase">{scrambled}</p>
-          <p className="mt-2 text-sm text-ash">
+          <p className="mt-2 text-sm text-muted">
             Resolves from a glyph pool over ~700ms. Disabled under reduced motion, and the initial
             render is the real text so SSR and hydration agree.
           </p>
         </section>
 
         <section>
-          <h2 className="font-mono text-sm tracking-[0.15em] text-ash uppercase">Text glitch</h2>
+          <h2 className="font-mono text-sm tracking-[0.15em] text-muted uppercase">Text glitch</h2>
           <div className="mt-3 space-y-4">
             <GlitchText as="p" className="font-display text-3xl uppercase">
               Spades
@@ -140,14 +140,14 @@ export default function GlitchDevPage() {
             <GlitchText as="p" className="font-display text-3xl uppercase">
               Joker
             </GlitchText>
-            <p className="text-sm text-ash">
+            <p className="text-sm text-muted">
               The maroon fringe is permanent. The slice animation fires on tap and during a tear.
             </p>
           </div>
         </section>
 
         <Rule />
-        <p className="pb-[env(safe-area-inset-bottom)] font-mono text-sm text-ash">
+        <p className="pb-[env(safe-area-inset-bottom)] font-mono text-sm text-muted">
           On a phone, scanlines and grain are hidden — verified by resizing below 768px.
         </p>
       </Stack>

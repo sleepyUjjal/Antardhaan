@@ -2,7 +2,7 @@ import { cn } from '@/lib/cn'
 
 const VARIANTS = {
   primary: 'bg-accent text-paper active:bg-accent-hot',
-  ghost: 'border border-rule text-fg active:border-accent active:text-accent',
+  ghost: 'border border-rule text-fg active:border-accent active:text-accent-text',
 }
 
 /**
