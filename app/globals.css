@@ -1,4 +1,140 @@
 @import 'tailwindcss';
 
-/* Design tokens, the good/bad mode swaps, and the mobile-first type scale
-   arrive in commit C2. Nothing but Tailwind's preflight lives here for now. */
+/* ---------------------------------------------------------------------------
+   Palette. These are the only literal colour values in the project.
+   Bone and void rather than #fff/#000: pure white inverting to pure black at
+   high frequency is punishing to read, and it strobes badly on cheap venue
+   projectors. Off-white and off-black hold ~18:1 while surviving an evening
+   of flipping.
+   --------------------------------------------------------------------------- */
+@theme {
+  --color-paper: #f2efe9;
+  --color-ink: #0b0b0c;
+  --color-maroon: #7a0e1e;
+  --color-maroon-hot: #a81228;
+  --color-maroon-deep: #3d0710;
+  --color-ash: #7a7772;
+
+  /* -------------------------------------------------------------------------
+     Type, mobile-first. Every clamp() minimum is the phone size and the
+     maximum is where it stops growing. Nothing here is designed wide and
+     squeezed down.
+     ------------------------------------------------------------------------- */
+  --text-sm: clamp(0.8125rem, 0.78rem + 0.2vw, 0.875rem);
+  --text-base: clamp(1rem, 0.95rem + 0.25vw, 1.0625rem);
+  --text-lg: clamp(1.125rem, 1.05rem + 0.4vw, 1.25rem);
+  --text-xl: clamp(1.25rem, 1.15rem + 0.6vw, 1.5rem);
+  --text-2xl: clamp(1.5rem, 1.3rem + 1vw, 2rem);
+  --text-3xl: clamp(1.875rem, 1.5rem + 1.6vw, 2.5rem);
+  --text-4xl: clamp(2.25rem, 1.7rem + 2.4vw, 3.25rem);
+  --text-5xl: clamp(3rem, 1.8rem + 4vw, 4.5rem);
+  --text-display: clamp(3rem, 15vw, 9rem);
+  --text-display--line-height: 0.88;
+  --text-display--letter-spacing: -0.02em;
+
+  /* Font families are wired to the next/font variables set on <html>. */
+  --font-sans: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+  --font-display: var(--font-anton), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* ---------------------------------------------------------------------------
+   Semantic tokens. Components never name a palette colour — they use bg/fg/
+   rule/accent — so flipping mode is a single attribute change on <html>.
+   --------------------------------------------------------------------------- */
+:root {
+  --bg: var(--color-ink);
+  --fg: var(--color-paper);
+  --rule: #221f20;
+  --accent: var(--color-maroon);
+  --accent-hot: var(--color-maroon-hot);
+  --accent-deep: var(--color-maroon-deep);
+  color-scheme: dark;
+}
+
+:root[data-mode='good'] {
+  --bg: var(--color-paper);
+  --fg: var(--color-ink);
+  --rule: #cfc9bf;
+  --accent: var(--color-maroon);
+  --accent-hot: var(--color-maroon-hot);
+  --accent-deep: var(--color-maroon-deep);
+  color-scheme: light;
+}
+
+:root[data-mode='bad'] {
+  --bg: var(--color-ink);
+  --fg: var(--color-paper);
+  --rule: #221f20;
+  color-scheme: dark;
+}
+
+/* `inline` is what makes the mode swap work: the utility references var(--bg)
+   directly instead of baking in the value at build time. */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-fg: var(--fg);
+  --color-rule: var(--rule);
+  --color-accent: var(--accent);
+  --color-accent-hot: var(--accent-hot);
+  --color-accent-deep: var(--accent-deep);
+}
+
+@layer base {
+  html {
+    /* Mobile browser chrome grows and shrinks as you scroll, so vh lies.
+       dvh is the honest unit, and the background has to be on <html> too or
+       the overscroll area flashes white on a dark page. */
+    min-height: 100dvh;
+    background-color: var(--bg);
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    min-height: 100dvh;
+    background-color: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    /* Kills the rubber-band bounce and the grey tap flash on iOS. */
+    overscroll-behavior-y: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* 16px is the threshold below which iOS Safari zooms the page on focus,
+     which wrecks the layout mid-submission. Scoped to text inputs only —
+     buttons and labels are allowed to be smaller. */
+  input,
+  select,
+  textarea {
+    font: inherit;
+    font-size: max(16px, 1rem);
+  }
+
+  ::selection {
+    background-color: var(--accent);
+    /* Must be a palette var: anything declared under `@theme inline` above is
+       not emitted as a custom property, so var(--color-bg) would be undefined. */
+    color: var(--color-paper);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+}
+
+/* Baseline only. This covers CSS animation and transition, but note it does NOT
+   stop the good/bad flip — swapping data-mode is an attribute change, not an
+   animation, so the colours would still invert instantly. C3's oscillator has
+   to read the media query in JS and stop flipping on its own; do not mistake
+   this block for the reduced-motion story. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -335,14 +335,17 @@ Each commit builds, deploys, and leaves the site in a coherent state. Commit mes
 
 **Goal:** the palette and type exist as tokens before any component uses a colour.
 
-**Files:** `app/globals.css`, `app/layout.jsx`, `components/ui/{Container,Stack,Rule,Button}.jsx`, `lib/cn.js`
+**Files:** `app/globals.css`, `app/layout.jsx`, `components/ui/{Container,Stack,Rule,Button}.jsx`, `lib/cn.js`, `app/dev/theme/page.jsx` (scratch page for the done-when check)
 
-- The six colour tokens and the `data-mode` swaps from §5.
+- The six colour tokens and the `data-mode` swaps from §5. Two-layer token setup, and the distinction matters:
+  - **Palette** (`--color-paper`, `--color-ink`, `--color-maroon`, …) under plain `@theme`. These are the only literal colour values in the project, and they must *not* change on a mode flip.
+  - **Semantic** (`--bg`, `--fg`, `--rule`, `--accent`) declared in `:root` and overridden per mode, then surfaced to Tailwind under **`@theme inline`**. `inline` is the load-bearing word: it makes `bg-bg` compile to `var(--bg)` rather than baking in the value at build time, which is what lets one attribute change on `<html>` recolour the whole site. The corollary bites: anything under `@theme inline` is *not* emitted as a custom property, so `var(--color-bg)` is undefined — use `var(--bg)`.
 - Type scale in `clamp()`, mobile value first. Anton (display), Archivo (body), JetBrains Mono (timestamps, codes, figures) via `next/font/google`, subset and self-hosted.
-- The mobile-first rules from §5 that belong at the token layer: `100dvh` sizing, safe-area insets, `16px` minimum on inputs, `-webkit-tap-highlight-color`, `overscroll-behavior`.
-- Three dumb primitives that reference only `--bg`/`--fg`/`--accent`.
+- The mobile-first rules from §5 that belong at the token layer: `100dvh` sizing, safe-area insets, `16px` minimum on inputs, `-webkit-tap-highlight-color`, `overscroll-behavior`. Background colour goes on `<html>` as well as `<body>`, or the iOS overscroll area flashes white on a dark page.
+- Four dumb primitives that reference only semantic tokens. `Button` is `min-h-[52px]` and states are `:active`, never `:hover`.
+- **Tailwind scans source text, not runtime values.** A class built at runtime — `` `text-${step}` `` — is never generated. Anywhere a class name depends on data, either write the full string in the file or use an inline `style` with `var()`. The scratch page does both, deliberately, as the reference for how to handle it.
 
-**Done when:** a scratch page renders correctly with `data-mode` swapped by hand, at 375 px and 1440 px, and no input zooms the page on focus in iOS Safari.
+**Done when:** the scratch page renders correctly with `data-mode` swapped by hand, at 375 px and 1440 px; the palette swatches hold still while the semantic swatches invert; and no input zooms the page on focus in iOS Safari.
 
 ---
 
@@ -353,6 +356,9 @@ Each commit builds, deploys, and leaves the site in a coherent state. Commit mes
 **Files:** `components/glitch/{GlitchProvider,GlitchOverlay,GlitchText}.jsx`, `components/glitch/useScramble.js`, `lib/glitch.js`, `app/dev/glitch/page.jsx`
 
 - `GlitchProvider`: mode state, jittered 4–10 s interval, micro-stutter at each flip, the `.is-tearing` window, rare signal-loss flash, and a `visibilitychange` pause. Reads `prefers-reduced-motion` and disables itself entirely.
+- **Hooks discipline, because the React Compiler rules are on.** `eslint-plugin-react-hooks` v7's `recommended` set includes `react-hooks/set-state-in-effect`, and it already caught this pattern in C2's scratch page. Two consequences for this commit:
+  - React state is the source of truth; the effect *pushes it out* to `document.documentElement.dataset.mode`. Never read the attribute in an effect and `setState` from it.
+  - `prefers-reduced-motion` and `document.hidden` are external systems, so read them with `useSyncExternalStore` (subscribe to the `matchMedia` `change` event and the `visibilitychange` event), not a read-then-`setState` effect. This is also the correct fix for the point in §5 about the CSS `prefers-reduced-motion` block not covering the flip — the oscillator genuinely has to stop, and that decision lives here.
 - `GlitchOverlay`: vignette always; scanlines and grain behind `@media (min-width: 768px)`.
 - `GlitchText`: `data-text` clones with maroon offsets, triggered by tap and flip — **not** hover.
 - `/dev/glitch`: live controls for flip interval, tear duration, layer opacity, forced flip, and a device-width preview frame. Worth keeping past launch — it's how you retune the effect on the venue's projector.
