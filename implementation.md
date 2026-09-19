@@ -414,7 +414,9 @@ Each commit builds, deploys, and leaves the site in a coherent state. Commit mes
 
 **Goal:** the schema from §3 exists in Neon, and the rows the site cannot start without are in it.
 
-**Files:** `db/schema.js`, `db/client.js`, `db/seed.js`, `drizzle.config.mjs`, `db/migrations/0000_*.sql`, `lib/env.js`, `lib/code.js`, `.prettierignore`, `package.json` (scripts)
+**Files:** `db/schema.js`, `db/client.js`, `db/seed.js`, `drizzle.config.js`, `db/migrations/0000_*.sql`, `lib/env.js`, `lib/code.js`, `.prettierignore`, `package.json` (scripts)
+
+- **The drizzle-kit config must be `drizzle.config.js`, not `.mjs`.** drizzle-kit discovers `drizzle.config.{js,json,ts}` and does not look for `.mjs` at all — given an `.mjs` config it falls back to the `drizzle.config.json` default and reports *that* file as missing. The error names a file you never wrote, which points at the wrong problem. `package.json` sets `"type": "module"`, so a `.js` config is ESM regardless and the syntax is identical.
 
 - Drizzle schema mirroring §3, including `unique(suit, team_slug)`, the `event_singleton` check, and all four indexes. No `relations()` — every read here is an aggregate (§6), which is SQL, not an object graph.
 - `neon-http` driver over the pooled connection string, with a one-time `console.warn` when the URL has no `-pooler` in the host. It works either way; a direct URL just opens a connection per query, which is precisely what §9 is avoiding.

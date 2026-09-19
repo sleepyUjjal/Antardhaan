@@ -1,6 +1,13 @@
 /**
  * drizzle-kit config: generate, migrate and studio all read this.
  *
+ * `.js`, not `.mjs`. drizzle-kit discovers drizzle.config.{js,json,ts} and does
+ * not look for `.mjs` at all — with an `.mjs` config it silently falls back to
+ * looking for `drizzle.config.json` and reports that file as missing, which
+ * reads like a missing-config problem rather than a wrong-extension one.
+ * package.json sets "type": "module", so this file is ESM either way and the
+ * import syntax below is unchanged.
+ *
  * `dotenv/config` is imported here rather than relying on drizzle-kit to find
  * .env on its own. Whether it does has moved between versions, and this file
  * needs DATABASE_URL present whatever version is installed.
