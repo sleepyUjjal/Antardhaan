@@ -1,0 +1,4 @@
+@import 'tailwindcss';
+
+/* Design tokens, the good/bad mode swaps, and the mobile-first type scale
+   arrive in commit C2. Nothing but Tailwind's preflight lives here for now. */
