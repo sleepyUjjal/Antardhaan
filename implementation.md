@@ -34,12 +34,14 @@ Three surfaces, one visual language:
 
 ---
 
-## 2. Two repo fixes to make first
+## 2. Repo hygiene
 
-Both are currently in the working tree and need handling in commit 1:
+Two items, both still open as of C5:
 
-1. **`.env` has no key.** The file contains a bare `postgresql://…` connection string. It must become `DATABASE_URL="postgresql://…"` or nothing will read it. While you're there: that connection string is the production Neon owner credential sitting in plaintext in a repo directory. **Rotate the Neon password before launch**, and never let `.env` out of `.gitignore` (it currently is ignored — keep it that way; commit `.env.example` instead).
-2. **`.gitignore` lists `implementation.md`.** You asked for this plan to be stored in the repo, but the ignore rule means git will never track it. Commit 1 removes that line (and the stray `t` file, which is just a copy of the brief).
+1. **`.env` is empty.** It started as a bare `postgresql://…` string, then became a keyed `DATABASE_URL="…"`, and is now zero bytes — so nothing reads a connection string and `npm run db:migrate` cannot run. Fill in all four variables before C5's commands. Separately: **rotate the Neon password.** It sat in plaintext in this directory for the length of this project, and emptying the file does not un-expose a credential that was already on disk. Never let `.env` out of `.gitignore`; commit `.env.example` instead.
+2. **The stray `t` file is still tracked.** It is a 741-byte copy of the original brief and `git ls-files` lists it, so it is in the history. `git rm t` — the brief survives in the preamble above and in the commit that added it.
+
+**A correction, because the first draft of this section was wrong.** It claimed `.gitignore` listed `implementation.md` and that "git will never track it". The rule was there, but the file was **already tracked**, and `.gitignore` has no effect on a tracked file. The rule was inert, not harmful — this plan has been in the repo and under version control the whole time. The line is gone now (a rule that does nothing is worse than no rule), but nothing was ever at risk, and no work was ever invisible to git.
 
 ---
 
@@ -74,7 +76,7 @@ create table submissions (
   team_name    text        not null,   -- as typed; display value
   team_slug    text        not null,   -- normalized; grouping key
   submitted_at timestamptz not null default now(),  -- server clock, never client
-  unique (suit, team_slug)             -- first solve wins, enforced by the DB
+  constraint submissions_suit_team_idx unique (suit, team_slug),  -- first solve wins, enforced by the DB
 );
 
 create index submissions_suit_time_idx on submissions (suit, submitted_at);
@@ -264,7 +266,7 @@ You asked for simple, so this section is the honest accounting of what that cost
 | Skipped | Why it's acceptable here |
 |---|---|
 | Hashing the suit codes | Codes are checked server-side and never reach the client, so a hash only protects against a database dump — and if someone has your Neon credentials, the codes are the least of it. Plain text buys something real: the admin dashboard can show you a code you misplaced. |
-| Rate limiting submissions | Brute-forcing an 8-character code from a 32-character alphabet is 32⁸ ≈ 1.1 × 10¹² possibilities. At a sustained 20 requests/second that's roughly 1,700 years. Nobody is guessing it; they'll find it written on a clue card instead. |
+| Rate limiting submissions | Brute-forcing an 8-character code from a 31-character alphabet is 31⁸ ≈ 8.5 × 10¹¹ possibilities. At a sustained 20 requests/second that is roughly 1,350 years to a 50% chance — and that is assuming the attacker knows the alphabet and has no other way in. Nobody is guessing it; they'll find it written on a clue card instead. |
 | Storing IPs or user agents | Nothing to store them for. The upside is that the database holds no personal data at all — just team names people chose themselves. |
 | Login rate limiting | The admin password is long and only you know it. A login-attempt table to defend a single-user dashboard for one evening is machinery for its own sake. |
 
@@ -410,32 +412,33 @@ Each commit builds, deploys, and leaves the site in a coherent state. Commit mes
 
 ### C5 — `feat(db): Neon + Drizzle schema, migration, and seed`
 
-**Goal:** the schema from §3 exists in Neon.
+**Goal:** the schema from §3 exists in Neon, and the rows the site cannot start without are in it.
 
-**Files:** `db/schema.js`, `db/client.js`, `drizzle.config.mjs`, `db/migrations/0000_*.sql`, `lib/env.js`
+**Files:** `db/schema.js`, `db/client.js`, `db/seed.js`, `drizzle.config.mjs`, `db/migrations/0000_*.sql`, `lib/env.js`, `lib/code.js`, `.prettierignore`, `package.json` (scripts)
 
-- Drizzle schema mirroring §3, including `unique(suit, team_slug)` and all four indexes.
-- `neon-http` driver over the pooled connection string.
-- `lib/env.js`: read and check the four env vars once at boot, throwing a readable error if one is missing — so a misconfiguration surfaces immediately rather than as a 500 mid-event.
-- Migration seeds the `event` row (start time = now) and five `suits` rows with placeholder slugs and codes.
+- Drizzle schema mirroring §3, including `unique(suit, team_slug)`, the `event_singleton` check, and all four indexes. No `relations()` — every read here is an aggregate (§6), which is SQL, not an object graph.
+- `neon-http` driver over the pooled connection string, with a one-time `console.warn` when the URL has no `-pooler` in the host. It works either way; a direct URL just opens a connection per query, which is precisely what §9 is avoiding.
+- **`lib/code.js` lands here, not in C6.** The seed is its first consumer, and two generators would drift. It uses `node:crypto`'s `randomInt` rather than `Math.random` — these codes are what stands between a stranger and a chamber, and `Math.random` is not designed to be unguessable. `randomInt` is also uniform, so there is no modulo bias.
+- **`lib/env.js` validates lazily.** Importing it is free; the error appears at the first line that *reads* a value, naming the variable. Checking at module load instead turns a missing variable into an import-time crash in whichever file happened to pull it in first — same bug, worse message.
+  - `NEXT_PUBLIC_SITE_URL` comes through here for the admin copy-link and the export, but **not** for `app/layout.jsx`, which keeps C4's tolerant localhost fallback. A wrong OG URL is cosmetic; a broken admin page is not.
+- **The seed is a script, not part of the migration** — this is a change from the first draft of this section. A migration runs once and is recorded, so you cannot re-run it when a row goes missing for some unrelated reason. `db/seed.js` is idempotent and **never overwrites**: both inserts are `onConflictDoNothing`, so running it after the event has started will not touch a start time you set, a slug you rotated, or a code you generated. It prints the target host (never the credential) before writing, because a seed that quietly ran against production is the classic way to lose an evening.
+- **`drizzle-kit generate` writes the migration — do not hand-write `0000_*.sql`.** The instinct is reasonable and it fails silently: `drizzle-kit migrate` finds pending migrations through the journal in `db/migrations/meta/`, so a hand-written `.sql` with no matching snapshot is *never applied* and no error is raised. When something genuinely cannot be expressed in the schema, the supported route is `drizzle-kit generate --custom`, which creates the journal entry for you.
+- `npm run db:generate` → `db:migrate` → `seed`, in that order. No `db:push`: it bypasses the migration folder and desynchronises it, and with exactly one migration there is nothing to gain.
 - `event.glitch` (jsonb, default `{}`) is created with the table here; C12 is the only thing that ever writes to it.
 
-**Done when:** `npm run db:migrate` applies cleanly, `npm run db:studio` shows the three tables with their indexes, inserting a duplicate `(suit, team_slug)` is rejected, and `explain analyze` on the per-suit leaderboard query shows an index scan rather than a sort.
+**Done when:** `npm run db:generate` has produced `0000_*.sql` and you have **read it** before applying it — in particular the `event_singleton` check, which Drizzle emits with a qualified column reference and is worth confirming renders as `"event"."id" = 1` rather than something Postgres rejects. Then: `npm run db:migrate` applies cleanly, `npm run db:studio` shows the three tables with their indexes, `npm run seed` is safe to run twice, inserting a duplicate `(suit, team_slug)` is rejected, and `explain analyze` on the per-suit leaderboard query shows an index scan rather than a sort.
 
 ---
 
-### C6 — `feat(lib): suit constants, team-name normalization, and code helpers`
+### C6 — `feat(lib): team-name normalization`
 
-**Goal:** the pure logic, tested before anything calls it.
+**Goal:** the pure logic that stops one team becoming two rows, tested before anything calls it.
 
-**Files:** `lib/suits.js`, `lib/team.js`, `lib/code.js`, `lib/team.test.js`, `vitest.config.mjs`
+**Files:** `lib/team.js`, `lib/team.test.js`, `lib/code.test.js`, `vitest.config.mjs`
 
-- `suits.js` already exists from C4 — it was created there because the landing page is the first thing that needs a glyph, and shipping a second copy of the suit list would be worse than moving the file's first commit. C6 adds the normalization and code modules alongside it.
-
-- `suits.js`: the `SUITS` map — `label`, `glyph`, display order. Visuals live here, not in the database.
-- `team.js`: `normalizeTeamName` → `team_slug`. Strip punctuation, collapse whitespace, lowercase, NFD-normalize accents. Reject empty-after-normalization and names over 40 characters.
-- `code.js`: generate an 8-char code from a 32-char unambiguous alphabet (no `0/O/1/I/L`), and a slug generator from the same idea.
-- `team.test.js`: the collapse cases that would otherwise silently split a leaderboard row — casing, extra spaces, trailing punctuation, accents, emoji-only names.
+- `normalizeTeamName` → `team_slug`: strip punctuation, collapse whitespace, lowercase, NFD-normalize accents. Reject empty-after-normalization and names over 40 characters.
+- `lib/code.test.js`: `generateCode` and `generateSlug` return the right length, never emit an ambiguous character (`0/O/1/I/L`), and do not repeat across a large sample.
+- `lib/suits.js` (C4) and `lib/code.js` (C5) already exist — C5 moved `code.js` forward because the seed needs it. This commit adds the tests for it rather than the file.
 
 This is the one place a test earns its keep: a normalization bug doesn't crash anything, it just quietly shows two rows for one team in front of everyone.
 
