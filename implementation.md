@@ -270,11 +270,12 @@ You asked for simple, so this section is the honest accounting of what that cost
 | Storing IPs or user agents | Nothing to store them for. The upside is that the database holds no personal data at all — just team names people chose themselves. |
 | Login rate limiting | The admin password is long and only you know it. A login-attempt table to defend a single-user dashboard for one evening is machinery for its own sake. |
 
-Three things stay, because they are the game rather than security:
+Four things stay, because they are the game rather than security:
 
 1. **Codes and slugs never reach the client.** A code is read from the database inside a Server Action and compared there. It is never passed as a prop, never serialized into the RSC payload, never in a `<Link>`. If it leaks, the game is over on the first night — C9 greps the build output to prove it hasn't.
 2. **`Referrer-Policy: no-referrer`.** One header, in `next.config.mjs`. It exists for a specific reason: if any chamber page ever loads or links to an external host, the browser would send the full slug in the `Referer` header, quietly handing your hidden URLs to a third party's logs.
 3. **`submitted_at` is always Postgres `now()`.** Timestamps are never taken from the client, so a phone with a wrong clock can't win a chamber.
+4. **Codes are compared with `timingSafeEqual` (C7).** This one has to be here, because it is what makes the row above true. Skipping rate limiting is justified by 31⁸ being unguessable, and that argument only holds if there is no cheaper oracle than guessing — and `a === b` short-circuits at the first mismatched character, so a comparison timed from the outside leaks the length of the matching prefix and turns 31⁸ guesses into 8 × 31 = 248. A nanosecond-scale difference is not measurable across a network with millisecond jitter, so this closes a theoretical hole rather than a practical one. It is three lines, and without it the 1,350-year figure above is not the figure that applies.
 
 React escapes interpolated strings, so team names on the public standings are safe as long as no component uses `dangerouslySetInnerHTML` — worth knowing since the standings display text that strangers typed.
 
@@ -456,13 +457,20 @@ This is the one place a test earns its keep: a normalization bug doesn't crash a
 
 **Goal:** the write path, end to end, with no UI yet.
 
-**Files:** `lib/chambers.js`, `lib/submissions.js`, `app/c/[slug]/actions.js`, `app/c/[slug]/page.jsx` (minimal)
+**Files:** `lib/chambers.js`, `lib/submissions.js`, `app/c/[slug]/actions.js`, `app/c/[slug]/page.jsx` (minimal), `app/c/[slug]/SubmitProbe.jsx` (C8 deletes it)
 
-- `getChamberData(slug)`: one batched query returning the suit row and the event row; `notFound()` on a slug miss; respects `is_active` and `submissions_open`.
-- `submitEntry(formData)`: hand-rolled validation → normalize the team name → compare the code against that suit's row → insert with `onConflictDoNothing` → return a plain object: `{ ok: true, submittedAt, elapsed, duplicate }` or `{ ok: false, reason: 'bad_code' | 'closed' | 'invalid' }`. Document the shape in a JSDoc comment since there are no types.
-- The duplicate path re-reads the existing row and returns its original timestamp, so a double-tap is harmless and the participant sees the time they actually earned.
+- `getChamberData(slug)`: one batched query (`db.batch`, one HTTP round trip — §9.2) returning the suit row and the event row; `notFound()` on a slug miss; respects `is_active` and `submissions_open`.
+- **The code is never selected here.** Not fetched and then filtered out — never read. §7's first rule breaks in practice via a `select()` with no column list whose result gets spread into a client component's props. Excluding the column at the query makes the guarantee structural: a value that was never fetched cannot escape through a careless prop, a `<Link>` or an RSC payload, and that does not depend on discipline holding at four separate call sites.
+- **A retired chamber is a 404, not a "closed" page.** `is_active = false` goes to the same `notFound()` as a typo. A page that says "this chamber has been deactivated" confirms a leaked slug was real, which is the one thing a leaked URL must never do (§4).
+- **The logic lives in `lib/submissions.js`, not in `actions.js`.** A `'use server'` module makes every export a publicly callable endpoint; keeping the logic out of it means the action file's callable surface is exactly one function, and the logic stays importable by a test.
+- **The action takes `(prevState, formData)` and reads the slug from a hidden field**, rather than binding the slug onto the action. Binding reads better but `useActionState` calls its action as `(prevState, formData)`, so a bound slug lands in the wrong parameter. The hidden field is safe because the slug is not what authorises anything: the action re-resolves it and checks the code against whichever suit comes back, so a tampered slug only chooses a different chamber to be rejected by.
+- **Codes are compared with `timingSafeEqual`.** This looks like the hardening §7 skips, and it is not — see the new item 4 in §7. Short version: skipping rate limiting is justified by 31⁸ being unguessable, and that argument only holds if there is no cheaper oracle than guessing.
+- `submitEntry` returns `{ ok: true, duplicate, submittedAt, elapsedMs }` or `{ ok: false, reason: 'bad_code' | 'closed' | 'invalid' }`, documented as a JSDoc `@typedef` since there are no types. `elapsedMs` rather than `elapsed` so the unit is in the name.
+- **Three situations collapse into `'closed'`**: a slug that stopped resolving, a chamber retired mid-event, and the global `submissions_open` switch. They are one sentence to the person holding the phone, and none is a distinction a participant can act on.
+- The duplicate path re-reads the existing row and returns its original timestamp, so a double-tap is harmless and the participant sees the time they actually earned. The conflict target is named (`[suit, teamSlug]`) rather than left bare, so a conflict on anything else surfaces as an error instead of being swallowed.
+- The page sets `dynamic = 'force-dynamic'` and deliberately has **no `generateStaticParams`** — a statically rendered chamber would bake every slug into the build output.
 
-**Done when:** manual checks cover a valid code, a wrong code, a duplicate submission, a deactivated suit, and submissions closed.
+**Done when:** manual checks cover a valid code, a wrong code, a duplicate submission, a deactivated suit, submissions closed, and a slug that never existed rendering the decoy rather than anything that confirms it does not.
 
 ---
 
