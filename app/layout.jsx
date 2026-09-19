@@ -1,4 +1,6 @@
 import { Anton, Archivo, JetBrains_Mono } from 'next/font/google'
+import { GlitchOverlay } from '@/components/glitch/GlitchOverlay'
+import { GlitchProvider } from '@/components/glitch/GlitchProvider'
 import './globals.css'
 
 // Self-hosted at build time, so no runtime request to Google and no layout
@@ -38,13 +40,21 @@ export const viewport = {
 
 export default function RootLayout({ children }) {
   return (
-    // data-mode is hard-coded to 'bad' until C3's oscillator takes it over.
+    // data-mode="bad" here is the server-rendered default so the first paint is
+    // already correct. GlitchProvider takes ownership of the attribute on mount.
     <html
       lang="en"
       data-mode="bad"
       className={`${display.variable} ${body.variable} ${mono.variable}`}
     >
-      <body>{children}</body>
+      <body>
+        <GlitchProvider>
+          {/* The overlay sits outside .glitch-content on purpose — see
+              GlitchOverlay.jsx for why that ordering is load-bearing. */}
+          <div className="glitch-content">{children}</div>
+          <GlitchOverlay />
+        </GlitchProvider>
+      </body>
     </html>
   )
 }

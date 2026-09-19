@@ -353,15 +353,20 @@ Each commit builds, deploys, and leaves the site in a coherent state. Commit mes
 
 **Goal:** the signature effect, isolated and tunable.
 
-**Files:** `components/glitch/{GlitchProvider,GlitchOverlay,GlitchText}.jsx`, `components/glitch/useScramble.js`, `lib/glitch.js`, `app/dev/glitch/page.jsx`
+**Files:** `components/glitch/{GlitchProvider,GlitchOverlay,GlitchText}.jsx`, `components/glitch/useScramble.js`, `lib/glitch.js`, `app/globals.css` (the `@layer components` block), `app/layout.jsx` (mount the provider), `app/dev/glitch/page.jsx`
 
 - `GlitchProvider`: mode state, jittered 4–10 s interval, micro-stutter at each flip, the `.is-tearing` window, rare signal-loss flash, and a `visibilitychange` pause. Reads `prefers-reduced-motion` and disables itself entirely.
 - **Hooks discipline, because the React Compiler rules are on.** `eslint-plugin-react-hooks` v7's `recommended` set includes `react-hooks/set-state-in-effect`, and it already caught this pattern in C2's scratch page. Two consequences for this commit:
   - React state is the source of truth; the effect *pushes it out* to `document.documentElement.dataset.mode`. Never read the attribute in an effect and `setState` from it.
   - `prefers-reduced-motion` and `document.hidden` are external systems, so read them with `useSyncExternalStore` (subscribe to the `matchMedia` `change` event and the `visibilitychange` event), not a read-then-`setState` effect. This is also the correct fix for the point in §5 about the CSS `prefers-reduced-motion` block not covering the flip — the oscillator genuinely has to stop, and that decision lives here.
-- `GlitchOverlay`: vignette always; scanlines and grain behind `@media (min-width: 768px)`.
-- `GlitchText`: `data-text` clones with maroon offsets, triggered by tap and flip — **not** hover.
-- `/dev/glitch`: live controls for flip interval, tear duration, layer opacity, forced flip, and a device-width preview frame. Worth keeping past launch — it's how you retune the effect on the venue's projector.
+- `GlitchOverlay`: vignette always, scanlines and tear behind the mobile budget. Two structural rules, both of which produce silent visual bugs when broken:
+  - **The overlays must be siblings of the content wrapper, not inside it.** A `transform` on an ancestor makes that ancestor the containing block for `position: fixed` descendants, so the overlays would scroll with the page and stretch to document height instead of the viewport. This is why the tear displacement animates `.glitch-content` and never `<body>`.
+  - **`mix-blend-mode` only reaches the backdrop within the nearest stacking context, and `position: fixed` forms one.** A blended layer nested inside `.glitch-layer` therefore blends against the other overlay layers rather than the page: the signal-loss inversion renders as a plain white flash and the grain stops blending at all. Grain and flash are consequently their own top-level fixed elements, outside `.glitch-layer`.
+- `GlitchText`: `data-text` clones with maroon offsets, triggered by tap and flip, never hover. The clones are `content: attr(data-text)`, so the component falls through to a plain element for non-string children.
+- `useScramble`: initial state is the real text, not a scrambled string. A random initial value differs between server and client and hydration mismatches; the scramble starts on the first tick instead, which reads as the text settling rather than arriving broken.
+- `/dev/glitch`: live controls for flip interval, tear duration and layer opacity, plus a forced flip. The opaque knobs are written out as `--glitch-*` custom properties by the provider, so retuning on the venue projector needs no redeploy; copy the values back into `TUNING_DEFAULTS` to make them permanent.
+  - **The device-width preview frame is cut.** The overlays are `position: fixed` to the real viewport, so a fake frame inside the page would render them wrong and teach you the wrong thing. Use real device emulation instead.
+  - The page reads the *root* provider rather than mounting its own; two providers would both write `data-mode` on `<html>` and fight over it.
 
 **Done when:** `/dev/glitch` flips continuously with no layout shift, no console errors, and no dropped frames on a 4× CPU throttle.
 

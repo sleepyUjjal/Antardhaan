@@ -50,6 +50,12 @@
   --accent-hot: var(--color-maroon-hot);
   --accent-deep: var(--color-maroon-deep);
   color-scheme: dark;
+
+  /* Glitch knobs. The provider overwrites these from its tuning state, which is
+     what lets /dev/glitch retune the effect on the venue projector live. */
+  --glitch-tear-ms: 200ms;
+  --glitch-grain-opacity: 0.16;
+  --glitch-scanline-opacity: 0.5;
 }
 
 :root[data-mode='good'] {
@@ -121,6 +127,229 @@
   :focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /* -------------------------------------------------------------------------
+     Overlay stack. Fixed and inert: pointer-events none so it can never eat a
+     tap, and aria-hidden on the container so screen readers skip it entirely.
+     ------------------------------------------------------------------------- */
+  .glitch-layer {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    overflow: hidden;
+    pointer-events: none;
+  }
+
+  .glitch-layer > * {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  .glitch-vignette {
+    background: radial-gradient(125% 85% at 50% 40%, transparent 42%, rgb(0 0 0 / 0.5) 100%);
+  }
+
+  /* Scanlines need opposite polarity per mode: dark lines vanish on a dark
+     background, light lines vanish on a light one. */
+  .glitch-scanlines {
+    opacity: var(--glitch-scanline-opacity);
+    background-image: repeating-linear-gradient(
+      to bottom,
+      rgb(0 0 0 / 0.16) 0 1px,
+      transparent 1px 3px
+    );
+  }
+
+  :root[data-mode='bad'] .glitch-scanlines {
+    background-image: repeating-linear-gradient(
+      to bottom,
+      rgb(255 255 255 / 0.07) 0 1px,
+      transparent 1px 3px
+    );
+  }
+
+  /* feTurbulence rendered once into a data URI and desaturated, then stepped
+     through four positions by CSS. No canvas, no requestAnimationFrame, no
+     per-frame JS.
+
+     Positioned as its own top-level fixed element rather than a child of
+     .glitch-layer — see GlitchOverlay.jsx. mix-blend-mode only reaches the
+     backdrop within the nearest stacking context, and position:fixed forms one,
+     so nesting this would blend it against the other overlays instead of the
+     page. */
+  .glitch-grain {
+    position: fixed;
+    inset: 0;
+    z-index: 61;
+    pointer-events: none;
+    opacity: var(--glitch-grain-opacity);
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23g)'/%3E%3C/svg%3E");
+    background-size: 120px 120px;
+    animation: glitch-grain-shift 1.1s steps(4) infinite;
+  }
+
+  /* The mobile layer budget: flip + tear + vignette. Scanlines and grain are
+     the two most expensive layers and on a 6" screen they read as noise rather
+     than texture. */
+  @media (max-width: 767px) {
+    .glitch-scanlines,
+    .glitch-grain {
+      display: none;
+    }
+  }
+
+  .glitch-tear {
+    opacity: 0;
+  }
+
+  :root.is-tearing .glitch-tear {
+    opacity: 1;
+    animation: glitch-tear-bands var(--glitch-tear-ms) steps(2) 1;
+    background: linear-gradient(
+      to bottom,
+      transparent 0 18%,
+      rgb(122 14 30 / 0.3) 18% 23%,
+      transparent 23% 56%,
+      rgb(242 239 233 / 0.12) 56% 59%,
+      transparent 59% 100%
+    );
+  }
+
+  /* A true inversion needs pure white and difference blending. This is the one
+     place in the project a literal #fff is correct rather than sloppy.
+     Its own top-level fixed element for the stacking-context reason above —
+     this one genuinely must blend against the page or it is just a white flash. */
+  .glitch-flash {
+    position: fixed;
+    inset: 0;
+    z-index: 70;
+    pointer-events: none;
+    opacity: 0;
+    background: #fff;
+    mix-blend-mode: difference;
+  }
+
+  :root.is-signal-loss .glitch-flash {
+    opacity: 1;
+  }
+
+  /* -------------------------------------------------------------------------
+     Page displacement during a tear. Applied to the content wrapper, never to
+     <body>: a transform on body would make it the containing block for the
+     fixed overlay layers, and they would scroll with the page.
+     ------------------------------------------------------------------------- */
+  :root.is-tearing .glitch-content {
+    animation: glitch-content-tear var(--glitch-tear-ms) steps(3) 1;
+  }
+
+  /* -------------------------------------------------------------------------
+     Text glitch. The clones are content: attr(data-text), so GlitchText must
+     be handed a plain string.
+     ------------------------------------------------------------------------- */
+  .glitch-text {
+    position: relative;
+    display: inline-block;
+  }
+
+  .glitch-text::before,
+  .glitch-text::after {
+    content: attr(data-text);
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  /* Persistent maroon fringe — enough to look corrupted, not enough to blur.
+     This is decoration, so maroon is allowed here where it would not be for
+     body copy. */
+  .glitch-text::before {
+    color: var(--accent);
+    transform: translate3d(-2px, 0, 0);
+    clip-path: inset(0 0 58% 0);
+    opacity: 0.75;
+  }
+
+  .glitch-text::after {
+    color: var(--fg);
+    transform: translate3d(2px, 0, 0);
+    clip-path: inset(54% 0 0 0);
+    opacity: 0;
+  }
+
+  :root.is-tearing .glitch-text::after,
+  .glitch-text.is-glitching::after {
+    opacity: 0.7;
+    animation: glitch-slice var(--glitch-tear-ms) steps(2) 1;
+  }
+
+  :root.is-tearing .glitch-text::before,
+  .glitch-text.is-glitching::before {
+    animation: glitch-slice var(--glitch-tear-ms) steps(2) 1 reverse;
+  }
+
+  @keyframes glitch-grain-shift {
+    0% {
+      transform: translate3d(0, 0, 0);
+    }
+    25% {
+      transform: translate3d(-2%, 1.5%, 0);
+    }
+    50% {
+      transform: translate3d(1.5%, -2%, 0);
+    }
+    75% {
+      transform: translate3d(-1%, -1%, 0);
+    }
+    100% {
+      transform: translate3d(0, 0, 0);
+    }
+  }
+
+  @keyframes glitch-tear-bands {
+    0% {
+      transform: translate3d(0, 0, 0);
+    }
+    50% {
+      transform: translate3d(-6px, 0, 0);
+    }
+    100% {
+      transform: translate3d(3px, 0, 0);
+    }
+  }
+
+  @keyframes glitch-content-tear {
+    0% {
+      transform: translate3d(0, 0, 0);
+    }
+    33% {
+      transform: translate3d(-3px, 0, 0);
+    }
+    66% {
+      transform: translate3d(2px, 0, 0);
+    }
+    100% {
+      transform: translate3d(0, 0, 0);
+    }
+  }
+
+  @keyframes glitch-slice {
+    0% {
+      transform: translate3d(-3px, 0, 0);
+      clip-path: inset(0 0 58% 0);
+    }
+    50% {
+      transform: translate3d(3px, -1px, 0);
+      clip-path: inset(30% 0 22% 0);
+    }
+    100% {
+      transform: translate3d(-1px, 1px, 0);
+      clip-path: inset(62% 0 0 0);
+    }
   }
 }
 

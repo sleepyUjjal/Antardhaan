@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useGlitch } from '@/components/glitch/GlitchProvider'
 import { Button } from '@/components/ui/Button'
 import { Container } from '@/components/ui/Container'
 import { Rule } from '@/components/ui/Rule'
@@ -38,16 +38,10 @@ function Swatch({ name }) {
 }
 
 export default function ThemeDevPage() {
-  // 'bad' matches the server-rendered data-mode on <html>, so the first paint
-  // is already correct and there is nothing to hydrate-mismatch.
-  const [mode, setMode] = useState('bad')
-
-  // This effect pushes state OUT to the DOM, which is what effects are for.
-  // Reading the DOM in an effect and calling setState from it is what
-  // react-hooks/set-state-in-effect flags, and it double-renders.
-  useEffect(() => {
-    document.documentElement.dataset.mode = mode
-  }, [mode])
+  // Mode is owned by GlitchProvider as of C3. This page must not write
+  // data-mode itself — two writers on the same attribute would fight, and the
+  // provider's flip would silently undo whatever you set here.
+  const { mode, setMode } = useGlitch()
 
   return (
     <Container className="py-10">
