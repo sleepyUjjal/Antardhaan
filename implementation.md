@@ -14,7 +14,7 @@ Three surfaces, one visual language:
 | Surface | Route | Audience | Purpose |
 |---|---|---|---|
 | Landing | `/` | Everyone | Sets the theme. Decoy. No links to chambers. |
-| Chambers | `/c/<slug>` ×5 | Participants who were handed the URL | Enter team name + suit code → timestamp recorded |
+| Chambers | `/<slug>` ×5 | Participants who were handed the URL | Enter team name + suit code → timestamp recorded |
 | Admin | `/admin/*` | You, on your phone | Start time, the glitch controller, suit codes, hidden slugs, leaderboards, CSV export |
 
 ### Confirmed decisions
@@ -131,8 +131,8 @@ export const submissions = pgTable('submissions', {
 | Route | Type | Notes |
 |---|---|---|
 | `/` | static | Landing. Glitch showcase. No chamber links. |
-| `/c/[slug]` | dynamic | Looks up slug in `suits`. Unknown slug → `notFound()` → themed decoy 404. Never reveals whether a slug exists. |
-| `/c/[slug]` (action) | Server Action | The submission. Validated, code-checked, insert-or-conflict. |
+| `/[slug]` | dynamic | Looks up slug in `suits`. Unknown slug → `notFound()` → themed decoy 404. Never reveals whether a slug exists. |
+| `/[slug]` (action) | Server Action | The submission. Validated, code-checked, insert-or-conflict. |
 | `/admin/login` | static + action | Password → signed cookie. |
 | `/admin` | dynamic, guarded | Start time, stat cards, the active-hold banner. |
 | `/admin/glitch` | dynamic, guarded | The controller: knobs, presets, hold. Publishes to `event.glitch`. |
@@ -146,6 +146,11 @@ export const submissions = pgTable('submissions', {
 | `not-found.jsx` | static | The decoy. Should look intentional, not broken. |
 
 Chamber pages set `robots: { index: false, follow: false }` and appear in no nav, sitemap or manifest. The slug never appears in a `<Link>` on a public page, so it is never shipped in a prefetch payload.
+
+**Chambers sit at the root, not under `/c/`.** `/<slug>` is the URL the participants get, and two things follow from that which the `/c/` prefix would have handled for us:
+
+- **`/[slug]` is now the catch-all for every URL on the domain that no other route claims.** `/.env`, `/wp-login.php`, `/phpmyadmin` all arrive at this route — and without a guard, each one is a query against Neon in Singapore. `SLUG_PATTERN` in `lib/chambers.js` rejects the impossible before the query. Next serves static segments first, so `/admin` and `/standings` never reach here, but nothing else is filtered for us.
+- **`RESERVED_SLUGS` is a C13 requirement, not a nicety.** A chamber slugged `admin` does not error — it silently becomes unreachable, because Next matches the static `app/admin/` route first and `getChamberData` never sees it. C13 validates every slug it saves with `isValidSlug`. Reserving a word costs nothing; discovering the collision mid-event costs a chamber.
 
 ---
 
@@ -457,7 +462,7 @@ This is the one place a test earns its keep: a normalization bug doesn't crash a
 
 **Goal:** the write path, end to end, with no UI yet.
 
-**Files:** `lib/chambers.js`, `lib/submissions.js`, `app/c/[slug]/actions.js`, `app/c/[slug]/page.jsx` (minimal), `app/c/[slug]/SubmitProbe.jsx` (C8 deletes it)
+**Files:** `lib/chambers.js`, `lib/submissions.js`, `app/[slug]/actions.js`, `app/[slug]/page.jsx` (minimal), `app/[slug]/SubmitProbe.jsx` (C8 deletes it)
 
 - `getChamberData(slug)`: one batched query (`db.batch`, one HTTP round trip — §9.2) returning the suit row and the event row; `notFound()` on a slug miss; respects `is_active` and `submissions_open`.
 - **The code is never selected here.** Not fetched and then filtered out — never read. §7's first rule breaks in practice via a `select()` with no column list whose result gets spread into a client component's props. Excluding the column at the query makes the guarantee structural: a value that was never fetched cannot escape through a careless prop, a `<Link>` or an RSC payload, and that does not depend on discipline holding at four separate call sites.
@@ -478,7 +483,7 @@ This is the one place a test earns its keep: a normalization bug doesn't crash a
 
 **Goal:** the participant-facing page — the most important screen in the project.
 
-**Files:** `app/c/[slug]/page.jsx`, `components/chamber/{SuitSigil,SubmitForm,ResultPanel}.jsx`, `components/chamber/sigils/*.jsx`
+**Files:** `app/[slug]/page.jsx`, `components/chamber/{SuitSigil,SubmitForm,ResultPanel}.jsx`, `components/chamber/sigils/*.jsx`
 
 - Suit sigil hero at large scale — ♠ ♣ ♦ ♥ plus a hand-drawn joker sigil, each as inline SVG that participates in the mode flip.
 - One form: team name, code, submit. Name field autofocused; the code field takes over on `enterKeyHint="go"`. Bottom-anchored submit inside thumb reach, ≥ 52 px, with `env(safe-area-inset-bottom)` padding.
@@ -500,7 +505,7 @@ This is the one place a test earns its keep: a normalization bug doesn't crash a
 - `not-found.jsx`: a decoy that reads as part of the piece — it's the page an explorer is most likely to hit, so it should look deliberate.
 - **The build audit.** `npm run build`, then grep `.next/` for every real slug and every code. This is the check that catches the one mistake that ends the game on night one, and it's worth rerunning any time a chamber component changes.
 
-**Done when:** the grep returns nothing, and `/c/anything-wrong` renders the decoy without hinting that a correct slug exists.
+**Done when:** the grep returns nothing, and `/anything-wrong` renders the decoy without hinting that a correct slug exists.
 
 ---
 
@@ -561,7 +566,7 @@ This is the one place a test earns its keep: a normalization bug doesn't crash a
 - One card per suit, stacked on mobile: label, glyph, current slug, current code, last updated.
 - **Generate code** — new 8-char code, saved, shown immediately with a copy button. Because codes are plain text, you can also reopen this page any time and read them, which is the whole reason for that decision.
 - **Edit slug** — generate a random one or type a thematic one by hand.
-- **Copy chamber URL** — builds the full `<NEXT_PUBLIC_SITE_URL>/c/<slug>` and copies it, so sending a chamber to a team is one tap from your phone.
+- **Copy chamber URL** — builds the full `<NEXT_PUBLIC_SITE_URL>/<slug>` and copies it, so sending a chamber to a team is one tap from your phone. Refuses to save or copy a slug that `isValidSlug` rejects, and says which rule it broke — a reserved word here is a chamber that would silently never resolve.
 - **Deactivate** — retires a chamber that leaked, without deleting its submissions.
 
 **Done when:** rotating a code invalidates the old one immediately, and `navigator.clipboard` works over HTTPS on a phone.
@@ -605,7 +610,7 @@ This is the one place a test earns its keep: a normalization bug doesn't crash a
 - Loading and error boundaries, plus a readable screen for a missing env var and for an unreachable database — the two failures most likely to happen at the worst moment.
 - **Delete `app/dev/`.** `/dev/glitch` goes in C12; `/dev/theme` is a C2 scratch page that by now has no reason to be reachable in production. Neither leaks anything, but a public route into the machinery is untidy and free to remove.
 
-**Done when:** Lighthouse mobile ≥ 90 performance and ≥ 95 accessibility on `/`, `/c/<slug>`, and `/admin`, and a full keyboard-only submission succeeds.
+**Done when:** Lighthouse mobile ≥ 90 performance and ≥ 95 accessibility on `/`, `/<slug>`, and `/admin`, and a full keyboard-only submission succeeds.
 
 ---
 
