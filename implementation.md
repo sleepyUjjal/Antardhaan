@@ -436,15 +436,19 @@ Each commit builds, deploys, and leaves the site in a coherent state. Commit mes
 
 **Goal:** the pure logic that stops one team becoming two rows, tested before anything calls it.
 
-**Files:** `lib/team.js`, `lib/team.test.js`, `lib/code.test.js`, `vitest.config.mjs`
+**Files:** `lib/team.js`, `lib/team.test.js`, `lib/code.test.js`, `vitest.config.mjs`, `package.json` (the `test` script)
 
-- `normalizeTeamName` → `team_slug`: strip punctuation, collapse whitespace, lowercase, NFD-normalize accents. Reject empty-after-normalization and names over 40 characters.
-- `lib/code.test.js`: `generateCode` and `generateSlug` return the right length, never emit an ambiguous character (`0/O/1/I/L`), and do not repeat across a large sample.
+- `parseTeamName(raw)` → `{ displayName, slug } | null`. One function returning both forms, rather than a slug-only normalizer plus a second `.trim()` at the C7 call site: the 40-character rule and the display value have to agree about what the name *is*, and two places computing it is how they stop agreeing. `null` for every rejection, because C7's failure path is already a returned object and an exception would have to be caught and converted back into the same thing. The cost is that C7 cannot distinguish "too long" from "empty" and shows one message for both — deliberate, since neither is recoverable from the caller's side.
+- **Accent folding is Latin-only, and this is the subtle one.** The obvious implementation strips `\p{M}` after NFD. `\p{M}` is *every* combining mark in Unicode, including the Devanagari matras and the Arabic and Hebrew vowel points — characters that are part of a letter, not decoration on one. Stripping those turns `टीम` into `टम`, so two Hindi-named teams could never match each other at a Hindi college fest. The fold instead matches `(\p{Script=Latin})\p{M}+` and keeps the captured base, so it can only apply where it is wanted. `NON_ALPHANUMERIC` keeps `\p{M}` in its allowed class for the same reason — a surviving matra is part of its word, and dropping it there would undo the fix.
+- **Apostrophes are deleted, not turned into a space.** They are the only punctuation mark treated that way, and the reason is the whole point of the file: `"Bob's Boys"` and `"Bobs Boys"` are one team spelling one name, and the general rule would give `bob s boys` and `bobs boys` and split them.
+- **The 40-character limit counts code points**, not UTF-16 units. An emoji is one character to the person who typed it and two to `.length`, so `[...name].length` — the obvious check would reject a 31-character name for being 56 long.
+- `lib/code.test.js`: `generateCode` and `generateSlug` return the right length, never emit an ambiguous character (`0/O/1/I/L`), draw from all 31 alphabet characters rather than leaving the last one unreachable, and do not repeat across a large sample.
+- `vitest.config.mjs` pins `include: ['lib/**/*.test.js']`. The default glob excludes `node_modules` but not `.next`, and by C16 this commit sits next to a production build. The tests import relatively, so no `@/*` alias resolution is needed. `vitest` installs with `npm install -D vitest`, its version left to the resolver rather than guessed at.
 - `lib/suits.js` (C4) and `lib/code.js` (C5) already exist — C5 moved `code.js` forward because the seed needs it. This commit adds the tests for it rather than the file.
 
 This is the one place a test earns its keep: a normalization bug doesn't crash anything, it just quietly shows two rows for one team in front of everyone.
 
-**Done when:** `npm run test` passes, including a case proving `"Team  Vortex!"` and `"team vortex"` produce the same slug.
+**Done when:** `npm run test` passes, including a case proving `"Team  Vortex!"` and `"team vortex"` produce the same slug, and a case proving `टीम वर्टेक्स` survives with its matras intact.
 
 ---
 
