@@ -371,6 +371,304 @@
       clip-path: inset(62% 0 0 0);
     }
   }
+
+  /* -------------------------------------------------------------------------
+     Poster grounds. The landing page's print furniture.
+
+     An earlier pass at this took the poster further — a halftone field torn
+     into four misregistered quadrants, and a hairline corner frame. Both came
+     out. The torn field was the part that read as noise rather than as print at
+     the sizes the page actually draws it, and the corner marks competed with
+     the composition instead of framing it. What is left is the texture: the
+     jaali over the ground and the halftone screen, which are doing the same job
+     a paper stock does and are quiet enough to keep doing it behind a figure.
+
+     The ground — the jaali and the halftone screen — is static: no animation,
+     no blend mode, no per-frame work. So unlike the scanline and grain layers
+     above it is NOT part of the mobile budget and stays on at every width. It
+     is all currentColor, which is what makes it flip with the mode without a
+     rule per mode.
+
+     The figure below it is the one thing here that does blend, and it is one
+     static, non-animated layer rather than a full-viewport one, so it is not in
+     that budget either — but it is the reason this section cannot be read as
+     "nothing in the hero composites".
+     ------------------------------------------------------------------------- */
+
+  /* The hero stage. It exists to hold the three numbers the composition is
+     built from, and they are here together because none of them means anything
+     without the others.
+
+     --figure-h is the figure's height, as a share of the hero. --lockup-size is
+     the wordmark's type size, as a share of the viewport. --lockup-cap is how
+     tall its capital letters actually are, which is not the same number: Anton
+     draws its caps at roughly 0.73em, and the line box is 0.88em, so neither
+     the font size nor the box height is the height of the letters.
+
+     The reason all three are here is the overlap. The lockup is sized in vw and
+     the figure is sized as a share of the hero, which is the leftover after the
+     meta and the footer have taken theirs — two scales with no fixed
+     relationship. So an overlap expressed as a share of the hero (the obvious
+     way to write it) is right at exactly one window size: at 1440px a crown
+     crossing 3% of the hero is a fifth of the letters, and at 375px the same 3%
+     is half of them. Expressing it as a share of the CAP instead holds at every
+     width, because it is the same quantity the eye is judging. */
+  .hero-stage {
+    /* WIDTH-LED, WITH THE HERO AS A GUARD, and the order of those two terms is
+       the whole point.
+
+       It used to be `min(84%, 108vw, 50dvh)`. Every one of those is a height:
+       84% of the hero and 50dvh are both vertical, and 108vw is a width cap that
+       almost never binds. So the figure was effectively height-driven, and on a
+       laptop — where the hero is nearly the whole window and 50dvh therefore
+       pins it — dragging the window wider grew the wordmark and left the figure
+       exactly where it was. That is what "make it responsive based on width"
+       means here: the figure has to move on the same axis the wordmark does.
+
+       120vw leads now. It used to be 80vw, and the term was raised to 120vw —
+       exactly 1.5x — so the phone gets a bigger character. On phones the guard
+       is 95% of the hero rather than 76%: it is only there as a safety net so a
+       short or landscape phone cannot grow the figure past the section and clip
+       the head, and at 95% a normal portrait phone never reaches it — 120vw is
+       always the smaller term there, so the true 1.5x holds everywhere a phone
+       has room for it. At 768px and up the guard steps back down to 76%, which
+       is the number that decides how big the figure reads on a laptop and
+       keeps desktop unchanged.
+
+       BE CLEAR ABOUT WHERE THE GUARD TAKES OVER, because it is not a bug and it
+       is not fixable. On a tall phone 120vw is the smaller term and the figure
+       is genuinely width-driven. On a landscape laptop it is the opposite —
+       120vw at 1440 is 1728px against a 720px hero — so the hero's height binds
+       and widening the window alone will not move the figure. A figure sized
+       purely in vw on a landscape screen would be taller than the hero and its
+       head would be clipped off by `overflow-hidden`, which is worse than the
+       figure not tracking. So the honest summary is: width-driven wherever
+       width is the constraint, and the number to move for how big it reads on a
+       laptop is the 76%.
+
+       `.hero-figure` uses this for its height and the width follows from the
+       aspect ratio, so the art is scaled, never stretched. */
+    --figure-h: min(120vw, 95%);
+    --lockup-size: clamp(4.5rem, 18vw, 16.5rem);
+    --lockup-cap: calc(var(--lockup-size) * 0.73);
+    /* Where the crown is, as a share of the art's height — MEASURED off the
+       file, not estimated. It was estimated first, at 0.84, and that single
+       wrong digit is what produced a gap between the word and the head instead
+       of an overlap: at 0.84 the lockup was anchored ABOVE the head, by 27px on
+       desktop and 13px on a phone, and the only reason desktop looked like a
+       near-miss rather than a hole is that the cap is bigger there. The dome
+       starts 20% down the file; hence 0.80. Both copies of the art crop
+       identically, so this one number serves either.
+
+       If the artwork is ever re-cropped this is the number that goes stale, and
+       the symptom is exactly what that bug looked like: the head floating clear
+       of the letters, or burying them. Check it against the file, do not reason
+       about it. */
+    --figure-crown: 0.8;
+  }
+
+  /* Desktop and tablet get their own guard, so a knob meant for the phone (the
+     95% on `.hero-stage`) cannot be bumped while trying to size the laptop. It
+     used to be 76%, but desktop and tablet now run the figure up to 95% of the
+     hero — effectively filling it — which is as high as the composition goes
+     before the head and the wordmark start being clipped off the top. Raising
+     this past ~95-100% puts the crown past the hero edge, which is exactly the
+     cut that `overflow-hidden` exists to contain. */
+  @media (min-width: 768px) {
+    .hero-stage {
+      --figure-h: min(120vw, 95%);
+    }
+  }
+
+  /* Desktop gets a slightly smaller wordmark than phone and tablet. The lockup
+     rides on the figure's height — the anchor's bottom is 80% of the figure up,
+     minus a share of a cap — so on a laptop, where the figure now fills 95% of
+     a hero that begins at the top of the window, an 18vw word is tall enough
+     that its cap tops push past the top edge of the screen. 15vw is the same
+     word at ~17% smaller, with the caps clearing the viewport at 1366px-ish
+     laptop heights and up. Tablet is left on 18vw because its hero is taller
+     relative to the word. */
+  @media (min-width: 1024px) {
+    .hero-stage {
+      --lockup-size: clamp(4.5rem, 15vw, 13.5rem);
+    }
+  }
+
+  /* The hero lockup: sized as a share of the viewport rather than as a step on
+     the type scale.
+
+     An earlier pass dropped the ceiling entirely, on the reading that "it
+     should scale with the screen" meant "with no upper bound". That was wrong
+     on desktop, where 15vw is a 216px wordmark running four fifths of a 1440px
+     window — bigger than the hero it sits in, and the figure behind it stopped
+     reading as a figure at all. `text-display` is clamp(3rem, 15vw, 9rem) and
+     the ceiling was doing real work; the mistake was the ceiling's value, not
+     its existence.
+
+     This keeps a viewport-driven size. 12vw was raised to 18vw — exactly 1.5x —
+     and the ceiling to 16.5rem, so it now responds all the way to about 1470px
+     and then holds. The 4.5rem floor is the phone: below about 400px the word
+     stops shrinking and simply fills (and bleeds off) what it has.
+
+     Both numbers are worth moving, and 18vw is the one that decides whether the
+     desktop reads as a poster or as a mistake. `--lockup-size` is where they
+     live, so that the overlap below can be measured in the same units. */
+  .hero-lockup {
+    font-size: var(--lockup-size);
+    line-height: 0.88;
+    letter-spacing: -0.02em;
+  }
+
+  /* Where the lockup sits, and how much of it the figure is allowed to cross.
+
+     The bottom of the lockup's box is placed BELOW the crown, so the head rises
+     into the letters. The offset is a share of a capital letter rather than a
+     share of the hero, because the cap is the thing the eye is actually
+     judging: an offset in hero-heights is right at exactly one window size,
+     since the lockup is sized in vw and the figure as a share of a hero that is
+     itself whatever the meta and the footer left over.
+
+     0.5, raised from 0.35 to let the word sit lower on the page. `line-height:
+     0.88` puts the box's bottom edge about 0.07em below the baseline, and Anton's
+     caps are 0.73em, so a share of the box's height is not a share of the
+     visible ink. 0.5 of a cap comes out at roughly two fifths of the letters
+     crossed — the head over the lower part of the word.
+
+     Write 0 to drop the overlap to nothing and push the word up, or up toward
+     0.7 to bury it. It is a share of the cap, so the same number reads the same
+     at 320px and at 2560px, which is the whole reason it is written this way.
+
+     Note the lockup is positioned rather than laid out, and it is the only thing
+     here that is. Its distance from the bottom is derived from the figure's
+     height, so it has to be measured against the same box the figure is — and
+     that box is this section, which is why the anchor sits absolutely inside it
+     rather than being a flex row. */
+  .hero-lockup-anchor {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: calc(var(--figure-h) * var(--figure-crown) - var(--lockup-cap) * 0.5);
+    z-index: 0;
+  }
+
+  /* The figure: the poster's character, standing on the bottom edge of the hero
+     with its crown crossing the wordmark, and standing in front of it.
+
+     THE ALPHA IS WHAT PUTS HIM IN FRONT. char.webp is a cutout — the man is
+     opaque, everything around him is transparent — so painting order alone is
+     enough: the lockup sits at z-index 0 and the figure at 10, and the word and
+     the halftone band both disappear behind his shoulders. No blend mode, no
+     mask, no trickery beyond the one z-index below.
+
+     AN EARLIER VERSION OF THIS COMMENT ARGUED THE OPPOSITE, AT LENGTH, AND IT
+     WAS WRONG ABOUT THE FILE. It read the art as carrying a plate — a flat
+     rectangle behind the figure that had to be blended or masked away — and
+     built a screen/multiply fallback and a two-layer luminance cutout to deal
+     with it. Both were solving a problem that did not exist. `mask-mode:
+     luminance` does not read alpha; it reads the RGB of pixels that are already
+     invisible, so on a transparent file it paints a silhouette over a cutout
+     that was already correct — and a blend on a transparent file is a no-op
+     that only costs the occlusion it was written to preserve. What looked like
+     a light-grey plate in a preview was the viewer's own backdrop showing
+     through. The file was transparent the whole time.
+
+     So the rule below is deliberately short, and the thing to be suspicious of
+     in future is a long explanation here. Polarity is the only real work, and
+     it is one filter. */
+  .hero-figure {
+    position: absolute;
+    /* Bottom-anchored and centred: the art is cropped through the torso
+       already, so it is meant to stand on the bottom edge rather than float. */
+    bottom: 0;
+    left: 50%;
+    translate: -50% 0;
+    /* Height-driven, width from the ratio, and `.hero-stage` explains
+       where the height comes from. The one thing worth knowing here is that the
+       figure's height is also what positions the lockup, so resizing it moves
+       the word with it rather than leaving the overlap to be re-tuned. */
+    height: var(--figure-h);
+    /* `width: auto` is load-bearing, and preflight is the reason it has to be
+       written at all. Tailwind's base layer gives every <img> `max-width: 100%`,
+       and the HeroFigure <img> also carries explicit width/height attributes
+       (2160x2700) for layout stability. Together those two made the browser
+       resolve the box's width against the *viewport* — a full-width rectangle
+       ~1.25:1 while the art is 0.8:1 — and object-fit: cover then upscaled the
+       art to cover that box and cropped the crown off. The crown is the whole
+       point of the overlap, so this was not a cosmetic bug. `width: auto` hands
+       the width back to the aspect-ratio box, and `max-width: none` stops the
+       preflight clamp from reaching in if the figure is ever wider than its
+       section. */
+    width: auto;
+    max-width: none;
+    aspect-ratio: 2160 / 2700;
+    /* `cover` rather than the default: with the box's aspect ratio and the art's
+       the same, this does nothing at all, and if a future export ever arrives at
+       a different ratio it crops instead of stretching. The instruction is not
+       to distort the figure, and this is what enforces it rather than trusting
+       the two ratios to stay in step. */
+    object-fit: cover;
+    /* Bad mode is the default — :root carries the ink palette and good mode is
+       the override — so the invert is on the base rule and switched off in good
+       mode, not the other way round. A missing data-mode attribute still has to
+       land on the ink ground, and on ink the art has to arrive light.
+
+       `invert` is safe here in a way it never was on the blend path: it leaves
+       alpha completely alone, so the ground stays transparent and the mode flip
+       costs nothing. That is the whole reason this can be one filter instead of
+       a filter per mode plus a blend per mode plus a mask. */
+    filter: invert(1);
+    /* Above the lockup and above the ground. DOM order already puts it there;
+       the number is here so that reordering the JSX cannot silently put the text
+       back on top. */
+    z-index: 10;
+    /* Never eats a tap, and never opens the iOS share sheet on a long press. */
+    pointer-events: none;
+  }
+
+  /* Good mode: paper ground, and the art already reads on paper — dark figure,
+     white highlights — so it goes on un-inverted. */
+  :root[data-mode='good'] .hero-figure {
+    filter: none;
+  }
+
+  /* A halftone screen: a dot grid in whatever colour the caller sets, with the
+     dots at roughly a sixth of the cell so the field reads as a tint rather
+     than as a fill — which is what lets the wordmark sit on top of it at full
+     contrast no matter how heavy the plate gets.
+
+     Two rulings, because a real job screens each plate separately and the
+     different rulings are what make two overlapping screens read as two plates
+     rather than as one field shifted. */
+  .halftone {
+    background-image: radial-gradient(currentColor 1.15px, transparent 1.3px);
+    background-size: 7px 7px;
+  }
+
+  .halftone-lg {
+    background-image: radial-gradient(currentColor 1.4px, transparent 1.6px);
+    background-size: 11px 11px;
+  }
+
+  /* A jaali over the ground — the poster's carved-stone ornament, drawn as a
+     mask rather than a background image so it can take currentColor. A data URI
+     cannot reference a CSS variable, and hand-writing the SVG once per mode is
+     how the scanlines above have to do it; a mask costs one more property and
+     makes the flip free.
+
+     Tiled lozenges rather than anything figurative: at 4.5% it is texture, and
+     texture is all it should be — the landing page is a decoy (§13) and an
+     ornament that resolved into a recognisable object would be the first thing
+     on the site that was about something. */
+  .ornament {
+    background-color: currentColor;
+    opacity: 0.045;
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='44' viewBox='0 0 44 44'%3E%3Cpath d='M22 3 41 22 22 41 3 22Z' fill='none' stroke='%23000' stroke-width='1'/%3E%3Cpath d='M22 12 32 22 22 32 12 22Z' fill='none' stroke='%23000' stroke-width='1'/%3E%3Ccircle cx='22' cy='22' r='2' fill='%23000'/%3E%3C/svg%3E");
+    -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='44' viewBox='0 0 44 44'%3E%3Cpath d='M22 3 41 22 22 41 3 22Z' fill='none' stroke='%23000' stroke-width='1'/%3E%3Cpath d='M22 12 32 22 22 32 12 22Z' fill='none' stroke='%23000' stroke-width='1'/%3E%3Ccircle cx='22' cy='22' r='2' fill='%23000'/%3E%3C/svg%3E");
+    mask-size: 44px 44px;
+    -webkit-mask-size: 44px 44px;
+    mask-repeat: repeat;
+    -webkit-mask-repeat: repeat;
+  }
 }
 
 /* Baseline only. This covers CSS animation and transition, but note it does NOT
