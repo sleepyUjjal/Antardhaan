@@ -139,6 +139,7 @@ export const submissions = pgTable('submissions', {
 | `/admin/suits` | dynamic, guarded | Codes + slugs. |
 | `/admin/leaderboards` | dynamic, guarded | Per-suit tabs + overall standings. |
 | `/admin/export.csv` | route handler, guarded | Full submission log, CSV. |
+| `/admin/export.json` | route handler, guarded | The same rows for a script, plus `startTime` — elapsed is meaningless without it. |
 | `/api/glitch` | route handler | Tuning JSON for every client, clamped. Edge-cached, 60 s. |
 | `/api/leaderboard` | route handler | JSON for polling. Edge-cached (§9). |
 | `/standings` | static shell + client fetch | Public board for the venue screen. |
@@ -261,6 +262,8 @@ order by suits_solved desc, total_elapsed asc;
 `display_name` takes the team's most recent spelling, so a team that fixes a typo on their fifth chamber isn't stuck with the typo in the standings.
 
 Ordering by `submitted_at` and by elapsed are equivalent orderings — ranking by elapsed is presentation, so the board reads as stopwatch times rather than clock times.
+
+**As built, none of this runs in SQL.** C14 derives both boards in `lib/board.js` from one `select` of every submission. The property above is unchanged — elapsed is still `submitted_at - start_time`, computed at read time, never stored, so moving the start time re-ranks five chambers with no writes — but the subtraction, the aggregates and the ordering all happen in JavaScript. The three reasons are in C14; the short version is that the tie rule needs a competition rank, `sum(interval)` across neon-http is a plausible-wrong-number hazard, and the per-team timeline needs every row in hand regardless. **The SQL above is what to go back to if the row count ever stops being trivial**, and the reasoning that bounds that is in `lib/board.js`.
 
 ---
 
@@ -683,7 +686,9 @@ The scan was otherwise clean: **no code appeared anywhere**, in a tree that incl
 
 - **One file beyond the plan's list: `components/admin/AdminNav.jsx`.** This is the third page under `/admin` and the first commit where typing URLs stopped being a reasonable way to move between them — the surface is a phone at a venue, and a phone has no address bar you would want to type into twice. It is a client component for one reason (`usePathname`) and marks the current page with `aria-current="page"` as well as a colour.
 
-  Its rule cost a second pass. The obvious test is "the pathname is this, or is beneath it", which is right for a section and **wrong for `/admin`, because `/admin` is a prefix of the other two** — so the plain version lights up Console on `/admin/suits` and `/admin/glitch`, i.e. on every page it exists to distinguish between, and the nav looks like it is working because something is always underlined. The three entries are siblings, so `/admin` carries an `exact` flag and the prefix half applies only to the others (where C14's sub-routes will want it). Nothing catches this: it is a wrong-looking-right bug in a file no test covers, and the only reason it is not shipping is that the comment claiming the behaviour was checked against the code.
+  Its rule cost a second pass. The obvious test is "the pathname is this, or is beneath it", which is right for a section and **wrong for `/admin`, because `/admin` is a prefix of the other two** — so the plain version lights up Console on `/admin/suits` and `/admin/glitch`, i.e. on every page it exists to distinguish between, and the nav looks like it is working because something is always underlined. The three entries are siblings, so `/admin` carries an `exact` flag and the prefix half applies only to the others. Nothing catches this: it is a wrong-looking-right bug in a file no test covers, and the only reason it is not shipping is that the comment claiming the behaviour was checked against the code.
+
+  C14 corrected the prediction that was in that comment. It expected boards to live under `/admin/leaderboards/…` and the prefix half to be doing work by now; the chamber is in the query string instead (`?suit=SPADES`), so nothing under `/admin` has a sub-route and the prefix half is genuinely unused. It stays — it is the correct rule for a nav, and the first nested page anyone adds would otherwise go dark on itself — but the comment now says it is unused rather than pretending it is load-bearing.
 
   It also cost the layout a change: the nav sits in a wrapper **outside** the `<Container>`, so the rule under it runs full-bleed and lands on the same edges as the header's. Inside, `Container`'s `px-5 sm:px-8` would inset it by 20 px and two rules 44 px apart would disagree about where the page ends, which reads as a mistake because it is one.
 
@@ -697,7 +702,7 @@ The scan was otherwise clean: **no code appeared anywhere**, in a tree that incl
 
 ### C14 — `feat(admin): leaderboards, overall standings, and CSV export`
 
-**Files:** `app/admin/leaderboards/page.jsx`, `components/admin/{SuitTabs,LeaderList,TeamTimeline}.jsx`, `app/admin/export.csv/route.js`, `lib/leaderboard.js`
+**Files:** `lib/board.js`, `lib/board.test.js`, `lib/leaderboard.js`, `app/admin/(dashboard)/leaderboards/page.jsx`, `app/admin/export.csv/route.js`, `app/admin/export.json/route.js`, `components/admin/{SuitTabs,LeaderList,TeamTimeline,ClockTime}.jsx`, `components/admin/AdminNav.jsx`
 
 - Tabs, one per suit, defaulting to the suit with the most recent submission.
 - **Mobile layout is a card list, not a table.** Rank, team name, time, elapsed — a wide table on a 375 px screen is the single most common way an admin panel becomes useless at an event. Desktop upgrades the same data into a table.
@@ -707,6 +712,65 @@ The scan was otherwise clean: **no code appeared anywhere**, in a tree that incl
 - Empty states that say "no submissions yet" rather than rendering an empty list.
 
 **Done when:** with 30 seeded submissions across 5 suits the ranking matches hand-computed expectations including the tie case, and the whole board is readable on a phone without horizontal scrolling.
+
+**The arithmetic moved out of SQL, and that is the commit.** §6 states the leaderboard as SQL — the per-suit board and the overall standings as two aggregates, with elapsed as `submitted_at - start_time` inside them. `lib/board.js` computes all of it in JavaScript instead, and `lib/leaderboard.js` runs one `select` of every submission plus one of the event row, in a single `db.batch`.
+
+**§6's design property is preserved exactly**: elapsed is derived at read time from the current start time and is never stored, so moving the start time still re-ranks five chambers with no writes. What changed is *where* the subtraction happens.
+
+Three reasons, in order of weight:
+
+1. **The tie rule is a ranking, and SQL has no competition rank without a window function.** `RANK()` gives 1, 2, 2, 4 but only as a window function over an `ORDER BY`, which is one more thing to get right, cannot be unit-tested here, and has an off-by-one failure mode that renders as a plausible board. `rankBy` is four lines and has a test.
+2. **§6's aggregates need `sum(interval)` and `extract(epoch from …)`.** Over neon-http an interval comes back as a string that has to be cast and re-parsed; a faithful rewrite would have carried three casts whose failure mode is a correct-looking wrong number instead of an error.
+3. **The timeline needs every row anyway.** C14's own bullet asks the standings to expand into "all five chambers and where that team stands on each", and §6's two aggregates cannot produce that. Once the rows are in hand, the aggregates are a `reduce` over a few thousand objects.
+
+**The cost is real and is written into the module rather than hidden:** every submission is in memory at once. At the stated scale — 500 teams × 5 chambers, §9 — that is 2,500 rows, which is nothing, and it stops being nothing somewhere in the tens of thousands. If the event ever grows past that, §6's SQL is the shape to go back to, which is why it stays in the plan.
+
+**Two more consequences of fetching once, both wanted.**
+
+- **One round trip, not two.** §6's two aggregates would have been two statements. §9.2's rule is that a page pays for one HTTP request, and `db.batch` is how this commit keeps to it: the submissions and the event row ride together.
+- **The suit board and the standings cannot disagree.** Two statements in a batch are not one transaction, so a solve landing between them would put a team on the chamber board and not in the standings — on the same screen, at the same moment. Deriving both from one array makes that unrepresentable rather than unlikely.
+
+**The split into `lib/board.js` and `lib/leaderboard.js` is C13's split again.** `lib/leaderboard.js` imports `db/client.js`, which reads `DATABASE_URL` at import time by design, so anything importing it cannot be loaded without a database — and the done-when above is precisely a set of arithmetic claims to check against hand-computed expectations. A rule you can only verify against a live Neon branch is a rule nobody verifies. `lib/board.js` has one import (`SUIT_KEYS` from `lib/suits.js`) and no database.
+
+**Things worth knowing about how this landed.**
+
+- **The standings are a card list at every width; the chamber board is two layouts.** `LeaderList` renders an `<ol>` and a `<table>` and lets CSS hide one, which is affordable because the rows are static. `TeamTimeline` cannot do that: it expands, and a `<li>` and a `<tr>` cannot share a parent, so duplicating it across two layouts would mean two copies of the open/closed state that can disagree. It is a single list at every width — which is also the honest answer, because "which two chambers has this team not found" is a question you ask from a phone.
+
+- **`components/admin/ClockTime.jsx` is a fourth component beyond the plan's three, and the reason is hydration.** `formatClockTime` is `toLocaleTimeString`: it resolves against the server's timezone during server rendering and the device's in the browser, so a server-rendered board shows Vercel's UTC to an organiser standing in a venue in IST — and React flags the mismatch on hydration. `lib/format.js` says this at the top and it is why no formatter in it is called during SSR. The board's *ranking* column does not have this problem: `formatElapsed` is pure arithmetic on a duration and renders identically on both sides, which is why the number a board is ordered by is the one that never flickers, and only the wall clock needed an island.
+
+  The island uses `useSyncExternalStore` with a `getServerSnapshot`, which is the shape `StartTimeForm` and `GlitchProvider` already use. That is not a style preference: `react-hooks/set-state-in-effect` rejects the mount-effect-and-setState version, and `getServerSnapshot` is what makes the hydration render match the server HTML — so there is no `suppressHydrationWarning` here, and adding one would have been a claim that the two renders differ when the hook exists to make them agree. It is rendered per row rather than once per list behind a shared "is hydrated" flag, because that flag makes whether a time is real a property of the list, and the first time a row is rendered somewhere else it comes out blank with nothing to explain it.
+
+- **The export guard is a CSV-injection measure, and its asymmetry is the design.** A field beginning `=`, `+`, `-`, `@`, tab or CR is a *formula* to Excel, Sheets and Numbers — and every team name in the file was typed by a stranger, so `=HYPERLINK(…)` and the DDE forms are pasted into the organiser's own spreadsheet. `csvCell` prefixes a leading apostrophe, and it does so **for strings only**: a number is never a formula, and a negative elapsed is a legitimate value in this file, so `'-42` would turn the duration column into text and silently break every sum and sort over it. The guard reads "strings that look like a formula".
+
+  The accepted cost, stated rather than hidden: some spreadsheets display the apostrophe, so a team named `=evil` reads as `'=evil`. The alternative is not a cleaner cell, it is one that runs. Anyone who needs the byte-for-byte name has the JSON export, which carries it unaltered.
+
+- **The CSV opens with a byte-order mark, and it is built from its code point.** Team names are allowed to be Devanagari — `lib/team.js` is explicit about not stripping them — and Excel on Windows reads a BOM-less UTF-8 CSV as the system codepage, which renders every Hindi team as mojibake. Both exports send `charset=utf-8` for the same reason at the other end. `String.fromCharCode(0xfeff)` rather than a literal character or a `\u` escape: a literal one is invisible in a diff, in an editor and in review, and any tool that trims trailing whitespace deletes it without saying so, while whether a file holds the character or the six characters that spell it cannot be told apart by looking. A code point can be misread neither way.
+
+- **`lib/board.test.js` is the done-when written down.** Thirty submissions across five chambers, hand-computed first, deliberately containing the cases that are easy to get wrong rather than looking like real play: a tie on a chamber board (S0 gives 1, 2, 2, **4** — nothing in third), a tie in the standings on *both* keys (Echo and Foxtrot share rank 6, so Golf is 8 with nobody in 7), a team with more chambers but a worse total on either side of the comparison, and teams missing chambers shown as gaps.
+
+  It also asserts things about the fixture itself — that each chamber is solved at most once per team, mirroring `unique('submissions_suit_team_idx')`, and that every timestamp is distinct. The second is what makes the order-independence assertion mean something: `overallStandings` resolves a team's display name from its last row, so if two rows shared a timestamp the answer would fall back to iteration order, and reversing the array could legitimately change it.
+
+- **Two properties the tests pin that the code could have got wrong quietly.** `rankBy` returns copies rather than annotating the rows it is given, because the same shared array is handed to four board builders and a `rank` written onto those objects would leak one board's numbering into the next. And `suitBoard` filters before its in-place sort for the same reason: the caller's array is the source for all five tabs.
+
+- **The standings carry a third sort key that §6 does not have, and it is not a tie-break.** Teams tied on chambers solved and total elapsed still **share a rank**; the slug comparison is there so the *order among them* is deterministic. Without it the standings shuffle on every refresh — same ranks, different rows in the same positions — which reads as the page being unstable and makes "read me the fourth line" useless over a radio. `teamSlug` is compared with `<` rather than `localeCompare` so that the server's locale cannot change the board's order.
+
+- **The selected chamber is in the URL, and the tabs are links.** `?suit=SPADES` is what makes each tab a `<Link>` instead of a button, and three things fall out of it that matter at a venue: the board works with JavaScript off, a refresh and a back button and a shared link all land on the board you were looking at, and the server component re-reads on every switch, so a tab you have not opened in ten minutes is not showing you a stale board. The cost is a round trip per press, which is the right trade for a board whose entire job is being current. The parameter is checked against `SUIT_KEYS` rather than trusted: `?suit=A&suit=B` arrives as an array and falls back to the default instead of rendering an empty board that looks like a database problem.
+
+  The tab counts come from the same rows the boards are built from, so a tab's number can never disagree with the length of the list it opens.
+
+- **`defaultSuit` is "most recently solved", not "most solves".** You open this page during the event, and the interesting chamber is the one somebody just finished — that is the solve you are about to be asked about. Defaulting to the fullest chamber would show the same board all evening.
+
+- **The two export routes set `dynamic` themselves.** A route handler is its own entry point and is **not** wrapped by the route group's layout, so the `force-dynamic` that keeps the boards page live does not reach them. Without the flag a GET handler is a candidate for caching, and a cached export is a result set that silently stops matching the board it claims to be. Both also send `Cache-Control: no-store` for the same reason at the proxy, and a fixed filename, so a second pull is a browser-suffixed `(1)` rather than a name nobody can predict.
+
+  The CSV writes rows in the query's order — oldest first, the order they were written — and deliberately does **not** re-sort into the board's fastest-first order. A spreadsheet can sort itself; an archival dump's job is preserving what cannot be reconstructed.
+
+- **The JSON export carries `startTime` because `elapsedMs` is meaningless without it.** Every duration in the file is measured from that instant, and an export of bare durations could not be checked against the boards once the console is gone. It costs one field. `elapsed_ms` and the human `elapsed` both appear in the CSV for the same kind of reason: if they ever disagree, the ms column is right and the readable one is a bug.
+
+- **`AdminNav` gained a fourth entry in one line**, second rather than last, because boards is the page that is actually open during the event while the other three are set up once and left alone. No logic changed, which is the test a page list should pass.
+
+- **Empty states say what is missing in words.** An empty board and a broken query look identical on a phone, and this page is only ever read during the one evening when "is it broken or is nobody playing" is a real question with two different answers. The chamber board says "no submissions for this chamber yet"; the standings say nothing has been solved.
+
+**Not yet observed running.** The same as C12 and C13: no build, lint or test has completed since C8, for the environment reason recorded in C10, so every expectation in `lib/board.test.js` is hand-traced rather than observed passing. The done-when's second half — "the whole board is readable on a phone without horizontal scrolling" — is not something a unit test can assert anyway, and is the first thing to check on a real 375 px screen.
 
 ---
 

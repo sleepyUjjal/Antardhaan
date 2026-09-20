@@ -9,7 +9,8 @@ import { usePathname } from 'next/navigation'
  * Added at C13, when this became the third page under `/admin` and typing URLs
  * stopped being a reasonable way to move between them — the whole point of this
  * console is that it is used one-handed on a phone, at a venue, and a phone has
- * no address bar you would want to type into twice.
+ * no address bar you would want to type into twice. C14 added a fourth entry
+ * without touching any of the logic, which is the test a page list should pass.
  *
  * A client component for one reason: `usePathname`. The server layout cannot know
  * the pathname, and the alternative — a `layout.jsx` per route so each can pass
@@ -29,6 +30,10 @@ import { usePathname } from 'next/navigation'
 
 const PAGES = [
   { href: '/admin', label: 'Console', exact: true },
+  // Second, not last. This is the page that is actually open during the event —
+  // the other three are set up once and then left alone — so it goes where a
+  // thumb reaches first and where reading order puts the thing you came for.
+  { href: '/admin/leaderboards', label: 'Boards' },
   { href: '/admin/suits', label: 'Suits' },
   { href: '/admin/glitch', label: 'Glitch' },
 ]
@@ -43,9 +48,14 @@ const PAGES = [
  * is there to distinguish between. The three are siblings, not a section with two
  * children, and the flag is what says so.
  *
- * The prefix half still matters for the entries without it: C14 puts boards under
- * `/admin/leaderboards/…` and this should light up for all of them without a row
- * per sub-route.
+ * The prefix half is unused today: none of the four has a sub-route, and C14's
+ * boards page keeps the selected chamber in the query string rather than the path
+ * (`?suit=SPADES`), so `usePathname` never returns anything deeper than the href.
+ * It stays because it is the *correct* rule for a nav and the alternative is a
+ * bug waiting for the first sub-route to be added: someone will nest a page under
+ * one of these and the tab will go dark on the page they are looking at, which
+ * reads as a broken nav rather than as a missed edit. An unused branch with a
+ * reason is cheaper than that.
  */
 function isCurrent(pathname, { href, exact }) {
   if (pathname === href) return true
