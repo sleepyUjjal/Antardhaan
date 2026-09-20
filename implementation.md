@@ -145,7 +145,7 @@ export const submissions = pgTable('submissions', {
 | `/robots.txt` | static | `Disallow: /`. |
 | `not-found.jsx` | static | The decoy. Should look intentional, not broken. |
 
-Chamber pages set `robots: { index: false, follow: false }` and appear in no nav, sitemap or manifest. The slug never appears in a `<Link>` on a public page, so it is never shipped in a prefetch payload.
+Chamber pages appear in no nav, sitemap or manifest. The slug never appears in a `<Link>` on a public page, so it is never shipped in a prefetch payload. `robots: { index: false, follow: false }` is set once in the root layout rather than per page — see C9 for why, and for why it is not a second layer on top of `robots.txt`. The one `<Link>` on the site is the decoy's route back to `/`, which names nothing.
 
 **Chambers sit at the root, not under `/c/`.** `/<slug>` is the URL the participants get, and two things follow from that which the `/c/` prefix would have handled for us:
 
@@ -409,7 +409,9 @@ Each commit builds, deploys, and leaves the site in a coherent state. Commit mes
 - **No links to chambers.** No sitemap entry, no prefetch, no manifest reference. The landing page has no links at all.
 - OG image from the same tokens, so a shared link looks like the site. Two things to know about it:
   - It is **permanently in bad mode.** A mode that flips every few seconds has no frame to freeze, and the void ground is the one that reads on both a light and a dark timeline.
-  - `next/font` self-hosts Anton as **woff2, which satori cannot read**, so the route fetches the TTF separately — inside a `try`/`catch`. The route is prerendered at build time, so an unguarded fetch would let a network blip break the build; losing the custom face is the acceptable failure.
+  - `next/font` self-hosts Anton as **woff2, which satori cannot read**, so the route needs the TTF separately.
+  - **The font is vendored at `assets/Anton-Regular.ttf`, not fetched at build time — corrected in C9.** The first draft fetched it from `raw.githubusercontent.com` inside a `try`/`catch`, on the theory that a network blip should cost the custom face rather than the build. The theory was wrong in a way worth recording: the catch passed `fonts: []` to `ImageResponse`, and **satori ships no font of its own**, so an empty list throws *"No fonts are loaded. At least one font is required to calculate the layout."* The graceful-degradation path was a build that dies on a blip. Earlier builds had simply been lucky with the fetch. It surfaces in C9 because C9 is the first commit that runs a clean production build.
+  - The wider lesson: **a build that reaches a third party is a build that fails for reasons that have nothing to do with you.** It also makes the build non-reproducible — the same commit builds differently on a day GitHub rate-limits. 50 KB in the repo removes the dependency and removes the failure path rather than handling it. A missing font is a setup error, so the route now throws with the exact `curl` in the message instead of failing three layers down inside satori.
 - `metadataBase` is set from `NEXT_PUBLIC_SITE_URL` in `app/layout.jsx`, falling back to localhost rather than throwing. The consequence is worth stating: **if that var is not set in Vercel before the production build, the deployed OG tags point at localhost.**
 
 **Done when:** it looks intentional in both modes at 375 px and 1440 px, nothing overflows horizontally on a narrow phone, and searching the DOM/source for any slug returns nothing.
@@ -498,14 +500,23 @@ This is the one place a test earns its keep: a normalization bug doesn't crash a
 
 **Goal:** close the discovery surface before anyone sees the site.
 
-**Files:** `app/robots.js`, `app/not-found.jsx`, `next.config.mjs`
+**Files:** `app/robots.js`, `app/not-found.jsx`, `next.config.mjs`, `app/layout.jsx`, `scripts/audit-build.mjs`
 
-- `robots.txt` disallows everything; chamber and standings pages set `index: false, follow: false`.
-- `Referrer-Policy: no-referrer` in `next.config.mjs`, for the reason in §7.
-- `not-found.jsx`: a decoy that reads as part of the piece — it's the page an explorer is most likely to hit, so it should look deliberate.
-- **The build audit.** `npm run build`, then grep `.next/` for every real slug and every code. This is the check that catches the one mistake that ends the game on night one, and it's worth rerunning any time a chamber component changes.
+- `robots.txt` disallows everything. **`noindex` goes in the root layout, not per page.** The brief named the chamber and standings pages, but no page on this site should be findable — it is five hundred people who were handed a URL, and every public surface is a decoy by design (§4). Setting it once in `app/layout.jsx` means a page added later cannot forget it, which is exactly the failure a per-page rule has.
+- **`Disallow` and `noindex` do not stack the way it looks, and the plan should say so.** A crawler that obeys `Disallow: /` never fetches a page, so it never reads that page's meta tag. They cover different arrivals: robots.txt stops the crawl; the meta tag is what a crawler sees if it arrives anyway, which is the normal case for link unfurlers (Slack, Discord, Twitter) that read meta tags and ignore robots.txt. Neither is redundant and neither is sufficient alone.
+- `Referrer-Policy: no-referrer` in `next.config.mjs`, for the reason in §7. `source: '/:path*'` so it covers `/` as well as the chambers, the decoy and the API routes. It is deliberately the only entry — the rest of the header set belongs to a site defending itself from strangers.
+- `not-found.jsx`: a decoy that reads as part of the piece — it's the page an explorer is most likely to hit, so it should look deliberate. It is also the page with the tightest constraint in the project: it must confirm nothing about what *does* exist. No "chamber not found", no "check your code", no list of suits. One sentence, about this address alone, identical whether the visitor typed `/.env` or came one character short of a real slug.
+- **The build audit is a command, not a ritual.** The brief wrote it as "`npm run build`, then grep `.next/` for every real slug and every code" — but a grep needs the secrets as arguments, which puts them in your shell history, which is the opposite of the point. `npm run audit` reads them from the database and walks the build output itself. It checks slugs and codes; it also checks `ADMIN_PASSWORD` and `SESSION_SECRET` if they are set, since those are the same failure class and two lines away. It **fails loudly** rather than passing quietly: an unseeded database, a missing build, or any secret too short for a substring search to mean anything each produce an explicit refusal to call the result clean.
 
-**Done when:** the grep returns nothing, and `/anything-wrong` renders the decoy without hinting that a correct slug exists.
+**The first run found a slug, and the finding was the script's fault — but not entirely.** `npm run audit` on the real project reported `SPADES slug` in `.next/dev/trace`, in a span reading `"inputPage":"/c/c5t6dhy8us"`. Three things came out of it, and all three are now in the script:
+
+1. **`.next/dev` is not build output.** It is the dev server's tree — never written by `next build`, never served by `next start`, never uploaded by Vercel — and it holds a trace of every URL the dev server has rendered. `.next/cache` and `.next/diagnostics` are excluded for the same reason. The exclusion is a denylist rather than an allowlist of `.next/static` and `.next/server`, deliberately: if a future Next version starts serving a new directory, a denylist still scans it while an allowlist would stop checking it silently. A denylist fails towards a noisy false positive, which is the direction to fail in — but the noise was still worth removing, because a scanner that cries wolf is one people learn to skim.
+2. **`next build` does not clean `.next/dev`, so a working checkout holds a mixed tree** — dev artifacts sitting beside the production build. That is the one state where the audit cannot mean what it says: the promise is "the bytes `next build` wrote are clean", and from the outside there is no way to tell which files the build wrote. It now refuses to certify a mixed tree and points at `npm run build:clean`, rather than scanning around the problem and printing "Clean" next to a directory it could not vouch for. That false confidence is exactly what the script exists to prevent.
+3. **The general lesson: anything that logs URLs leaves real slugs on disk.** The dev server does it. Vercel's function logs will do it. So will browser history on any device a participant used. None of that is a leak in the sense §7 means — no participant can reach your Vercel dashboard — but it means the slug's secrecy has an operational floor, and it is worth knowing where the copies are rather than being surprised by them. It also means the audit's scope should be "what a browser can fetch", which is now what it is.
+
+The scan was otherwise clean: **no code appeared anywhere**, in a tree that included 538 files of build output. §7's structural claim — that a column never selected has no value to leak — held on the first real test.
+
+**Done when:** `npm run audit` on a production build of a *seeded* database prints clean, and `/anything-wrong` renders the decoy without hinting that a correct slug exists.
 
 ---
 

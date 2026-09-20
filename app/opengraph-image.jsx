@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { ImageResponse } from 'next/og'
 
 export const alt = 'Antardhaan — Mridang 2k26'
@@ -16,26 +18,67 @@ const MUTED = '#8a8681'
  * seconds has no single frame to freeze, and the void ground is the one that
  * reads on both a light and a dark timeline.
  *
- * next/font self-hosts Anton as woff2, which satori cannot read, so this is a
- * separate fetch of the TTF. It is wrapped on purpose: this route is
- * prerendered at build time, and a network blip during a build should cost the
- * custom face, not the build. satori falls back to its bundled font.
+ * This route is the concrete reason `Referrer-Policy: no-referrer` exists (§7):
+ * the tag it serves is on every page including the chambers, so when a chamber
+ * link is unfurled by Slack or Discord, that service fetches a public URL with
+ * the chamber's own URL as the `Referer`. The header is what stops the slug
+ * going with it.
  */
-async function loadAnton() {
-  try {
-    const response = await fetch(
-      'https://raw.githubusercontent.com/google/fonts/main/ofl/anton/Anton-Regular.ttf',
-    )
-    if (!response.ok) return null
-    return await response.arrayBuffer()
-  } catch {
-    return null
+
+/**
+ * Anton, vendored at `assets/Anton-Regular.ttf`.
+ *
+ * This used to be fetched from raw.githubusercontent.com on every build, under a
+ * comment claiming a failed fetch was survivable because "satori falls back to
+ * its bundled font". That claim was false, and this is what it cost: satori
+ * ships no font of its own, and `new ImageResponse(..., { fonts: [] })` throws
+ * *"No fonts are loaded. At least one font is required to calculate the layout."*
+ * So the path written to degrade gracefully was instead a build that dies on a
+ * network blip — which is what happened on the first clean production build,
+ * after earlier builds had simply been lucky with the fetch.
+ *
+ * Vendored rather than fetched: 50 KB in the repo removes a live third-party
+ * dependency from every `next build`, and removes the failure path entirely
+ * rather than trying to handle it. next/font self-hosts Anton as woff2, which
+ * satori cannot read, so this is a separate copy of the TTF rather than the same
+ * file.
+ *
+ * The read is safe because this route is prerendered — the font is needed on the
+ * build machine, where the repo is checked out, not in the deployed runtime. If
+ * this ever becomes a dynamic route, the file has to be traced into the
+ * deployment (`outputFileTracingIncludes` in next.config.mjs) or it will be
+ * missing at request time.
+ */
+const FONT_PATH = join(process.cwd(), 'assets', 'Anton-Regular.ttf')
+
+let antonCache
+
+function loadAnton() {
+  if (antonCache === undefined) {
+    try {
+      antonCache = readFileSync(FONT_PATH)
+    } catch {
+      antonCache = null
+    }
   }
+  return antonCache
 }
 
-export default async function OpengraphImage() {
-  const anton = await loadAnton()
-  const fonts = anton ? [{ name: 'Anton', data: anton, weight: 400, style: 'normal' }] : []
+export default function OpengraphImage() {
+  const anton = loadAnton()
+
+  // Loud, early, and with the fix in the message. The alternative — passing an
+  // empty font list — is what produced "No fonts are loaded" three layers down
+  // inside satori, naming neither the file that was missing nor the command that
+  // would produce it. A missing font is a setup error, not a runtime condition,
+  // so failing the build is the right answer; failing it unhelpfully is not.
+  if (!anton) {
+    throw new Error(
+      `Missing ${FONT_PATH}. Fetch it once:\n\n` +
+        '  mkdir -p assets && curl -L -o assets/Anton-Regular.ttf \\\n' +
+        '    https://raw.githubusercontent.com/google/fonts/main/ofl/anton/Anton-Regular.ttf\n',
+    )
+  }
 
   return new ImageResponse(
     (
@@ -50,7 +93,7 @@ export default async function OpengraphImage() {
           justifyContent: 'space-between',
           background: INK,
           padding: 72,
-          fontFamily: anton ? 'Anton' : 'sans-serif',
+          fontFamily: 'Anton',
         }}
       >
         <div
@@ -86,6 +129,6 @@ export default async function OpengraphImage() {
         </div>
       </div>
     ),
-    { ...size, fonts },
+    { ...size, fonts: [{ name: 'Anton', data: anton, weight: 400, style: 'normal' }] },
   )
 }

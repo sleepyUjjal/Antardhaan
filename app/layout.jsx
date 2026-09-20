@@ -41,6 +41,15 @@ export const metadata = {
   metadataBase: siteUrl(),
   title: { default: 'Antardhaan', template: '%s · Antardhaan' },
   description: 'An internal game event for Mridang 2k26.',
+  // Global rather than per-page. C9's brief names the chamber and standings
+  // pages, but there is no page on this site that *should* be findable: it is
+  // five hundred people who were handed a URL, and every public surface is a
+  // decoy by design (§4). Setting it here means a page added later cannot forget
+  // it, which is the failure mode a per-page rule has.
+  //
+  // This is a different arrival from `Disallow: /` in app/robots.js, not a
+  // second layer on the same one — see the note in that file.
+  robots: { index: false, follow: false },
 }
 
 // viewportFit: 'cover' is what makes env(safe-area-inset-*) resolve to real
