@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/Button'
 import { Rule } from '@/components/ui/Rule'
 import { getDashboard } from '@/lib/event'
 import { updateStartTime, updateSubmissionsOpen } from '../actions'
+import { releaseGlitch } from './glitch/actions'
 
 /**
  * The event console.
@@ -33,7 +34,7 @@ export const metadata = { title: 'Console' }
 const SECTION = 'font-mono text-xs tracking-[0.25em] text-muted uppercase'
 
 export default async function AdminDashboardPage() {
-  const { startTime, submissionsOpen, stats } = await getDashboard()
+  const { startTime, submissionsOpen, hold, stats } = await getDashboard()
 
   // Through `new Date` on the way out for the same reason lib/event.js does it on
   // the way in: a typed column select comes back as a Date, but that is the
@@ -64,6 +65,32 @@ export default async function AdminDashboardPage() {
       <div className="mt-4">
         <Rule tone={submissionsOpen ? 'rule' : 'accent'} />
       </div>
+
+      {/* THE FREEZE BANNER, and it earns its place by being the answer to a
+          question someone asks at 1 a.m. with growing alarm: "why has the screen
+          stopped moving?"
+
+          A global freeze you have forgotten about is indistinguishable from a
+          broken effect, and the person most likely to forget is the person who set
+          it — so the release lives on the reminder rather than two taps away on
+          the page that set it. It is a plain form action, so it works with no
+          JavaScript, on the device with 2% battery. */}
+      {hold ? (
+        <div className="mt-6 border border-accent-text p-4">
+          <p className="font-mono text-xs tracking-[0.25em] text-accent-text uppercase">
+            Glitch frozen on {hold}
+          </p>
+          <p className="mt-2 text-sm text-muted">
+            Every device is holding this frame and the flip has stopped. This is a setting, not a
+            fault — release it to put the effect back in motion.
+          </p>
+          <form action={releaseGlitch} className="mt-4">
+            <Button type="submit" variant="ghost" className="sm:w-auto">
+              Release the freeze
+            </Button>
+          </form>
+        </div>
+      ) : null}
 
       <div className="mt-6">
         <StatCards

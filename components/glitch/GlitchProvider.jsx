@@ -7,6 +7,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
 } from 'react'
@@ -14,6 +15,7 @@ import {
   TIMING,
   TUNING_DEFAULTS,
   isStillRoute,
+  mergeTuning,
   nextFlipDelay,
   nextSignalLossDelay,
   otherMode,
@@ -63,10 +65,35 @@ export function useGlitch() {
  * through useSyncExternalStore rather than a read-then-setState effect — both
  * because that is correct and because react-hooks/set-state-in-effect rejects
  * the other shape.
+ *
+ * FOUR INPUTS determine whether the oscillator runs: reduced motion, tab
+ * visibility, the route, and a published hold. The order between them is stated
+ * once, at `forced` below, because "which one wins" is the only question this
+ * component has to answer and it is a question with a wrong answer that looks
+ * fine in testing.
+ *
+ * No `tuning` prop. It was one until C12, when the tuning stopped being a
+ * property of the build and became a row in the database — the root layout this
+ * provider lives in is a server component and *could* read that row, but doing so
+ * would make every page on the site a database read for a value the edge can
+ * serve, and 500 concurrent visitors is the number this whole design is arranged
+ * around. So the defaults paint first and the published override arrives by fetch.
  */
-export function GlitchProvider({ children, initialMode = 'bad', tuning: tuningProp }) {
+export function GlitchProvider({ children, initialMode = 'bad' }) {
   const [mode, setMode] = useState(initialMode)
-  const [tuning, setTuning] = useState(tuningProp ?? TUNING_DEFAULTS)
+  const [tuning, setTuning] = useState(TUNING_DEFAULTS)
+
+  /**
+   * Whether anyone has moved a knob since this page loaded. A ref, not state:
+   * nothing renders from it, and re-rendering when it flips would be a render
+   * caused by "something else is about to be rendered".
+   *
+   * The tuning page is the only thing that writes tuning, and it does so through
+   * `setTuning` below — so this is set in the one place every edit has to pass
+   * through, rather than at each of the five call sites that would have to
+   * remember to.
+   */
+  const touched = useRef(false)
 
   const reducedMotion = useSyncExternalStore(
     subscribeReducedMotion,
@@ -75,9 +102,8 @@ export function GlitchProvider({ children, initialMode = 'bad', tuning: tuningPr
   )
   const hidden = useSyncExternalStore(subscribeVisibility, getHidden, getFalseOnServer)
 
-  // The route is the fourth input, alongside reduced motion and tab visibility.
-  // It is read here rather than passed down because the provider lives in the
-  // root layout, which has no per-route props — and because a second provider
+  // The route is read here rather than passed down because the provider lives in
+  // the root layout, which has no per-route props — and because a second provider
   // nested under this one would not work: both would write `data-mode` onto
   // <html> and they would fight over it every few seconds.
   //
@@ -86,11 +112,63 @@ export function GlitchProvider({ children, initialMode = 'bad', tuning: tuningPr
   const pathname = usePathname()
   const still = isStillRoute(pathname)
 
-  const active = !reducedMotion && !hidden && !still
-  // Derived, not set from an effect. Reduced motion locks the page to 'bad', and
-  // a held oscillator does the same — see isStillRoute for why bad is the frame
-  // a page with no flip loop should freeze on.
-  const effectiveMode = reducedMotion || still ? 'bad' : mode
+  /**
+   * The published freeze, or null. Read off the tuning blob because that is where
+   * it is stored — see lib/event.js for why it shares the column.
+   */
+  const hold = tuning.hold ?? null
+
+  // THE ORDER, and it is the whole of this component's policy.
+  //
+  // `prefers-reduced-motion` wins over everything, and has to: it is the user's
+  // own setting, made before they arrived, and a control on someone else's phone
+  // must never be able to override it. Holding it first is what makes that true
+  // even when a Showtime preset is published and a freeze is on.
+  //
+  // Then the admin subtree, which is held for its own reasons (see isStillRoute).
+  // Both of those freeze on `bad`, the frame a page with no flip loop should
+  // settle on. Only then the published hold, which is the one that can pin either
+  // frame.
+  const forced = reducedMotion || still ? 'bad' : hold
+
+  const active = !forced && !hidden
+  // Derived, not set from an effect: every one of the four inputs above is a
+  // reason to stop, and a mode written by an effect would be a fifth source of
+  // truth racing the others.
+  const effectiveMode = forced ?? mode
+
+  // The published override, fetched once per page load and merged onto the
+  // defaults. First paint is already on screen by then, which is the point:
+  // nothing below this line is blocked on the network.
+  useEffect(() => {
+    let cancelled = false
+
+    fetch('/api/glitch')
+      .then((response) => (response.ok ? response.json() : null))
+      .then((published) => {
+        if (cancelled || !published) return
+
+        // THE GUARD: only adopt the published value if nothing has been moved on
+        // this device yet.
+        //
+        // Without it the response reverts whatever you dragged while it was in
+        // flight, and the symptom is a control that springs back a fifth of a
+        // second after you let go — which reads as a broken knob, not as a race.
+        // The window is small and the tuning page is exactly where someone is
+        // most likely to be dragging within it, because the page loads with the
+        // sliders already under their thumb.
+        if (touched.current) return
+        setTuning(mergeTuning(published))
+      })
+      // Not an error state, and deliberately silent. The defaults are already on
+      // screen and are a correct rendering of "nothing has been published" — which
+      // is also what a failed request means, as far as this device can tell.
+      .catch(() => {})
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     document.documentElement.dataset.mode = effectiveMode
@@ -153,6 +231,18 @@ export function GlitchProvider({ children, initialMode = 'bad', tuning: tuningPr
   }, [active, tuning])
 
   // Signal loss: a rare full inversion flash.
+  //
+  // `tuning` is a dependency for the same reason it is on the flip loop, and it
+  // arrived for the same reason: the gap became a knob. Leaving it off would be
+  // invisible on the page that tunes it — you would drag "Flash every" down to
+  // five seconds, and nothing would happen until the *old* gap expired, which for
+  // a thirty-to-sixty-second timer is long enough to conclude the slider is
+  // broken and go looking in the database.
+  //
+  // Restarting the countdown on every knob move does mean a drag can push the next
+  // flash further out. That is the honest behaviour rather than a bug: the numbers
+  // changed, so the schedule drawn from them is redrawn. The flash is rare by
+  // design and the panel says so.
   useEffect(() => {
     if (!active) return undefined
 
@@ -170,7 +260,7 @@ export function GlitchProvider({ children, initialMode = 'bad', tuning: tuningPr
           TIMING.signalLossFlashMs,
         )
         schedule()
-      }, nextSignalLossDelay())
+      }, nextSignalLossDelay(tuning))
     }
     schedule()
 
@@ -180,9 +270,24 @@ export function GlitchProvider({ children, initialMode = 'bad', tuning: tuningPr
       clearTimeout(flashTimer)
       root.classList.remove('is-signal-loss')
     }
-  }, [active])
+  }, [active, tuning])
 
   const flip = useCallback(() => setMode((current) => otherMode(current)), [])
+
+  /**
+   * The tuning setter the panel writes through — exposed as `setTuning` so a
+   * caller sees an ordinary state setter, including the functional form.
+   *
+   * It is a wrapper for one reason: every edit has to be able to say "someone has
+   * touched this", and the only way to guarantee that is to make the marking and
+   * the setting the same call. A separate `markTouched()` next to `setTuning()`
+   * would be correct exactly until the first time someone added a call site and
+   * remembered one of the two.
+   */
+  const applyTuning = useCallback((next) => {
+    touched.current = true
+    setTuning(next)
+  }, [])
 
   const value = useMemo(
     () => ({
@@ -192,10 +297,11 @@ export function GlitchProvider({ children, initialMode = 'bad', tuning: tuningPr
       reducedMotion,
       paused: hidden,
       active,
+      hold,
       tuning,
-      setTuning,
+      setTuning: applyTuning,
     }),
-    [effectiveMode, flip, reducedMotion, hidden, active, tuning],
+    [effectiveMode, flip, reducedMotion, hidden, active, hold, tuning, applyTuning],
   )
 
   return <GlitchContext.Provider value={value}>{children}</GlitchContext.Provider>
