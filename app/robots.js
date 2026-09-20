@@ -2,8 +2,8 @@
  * `/robots.txt` — nothing is crawlable.
  *
  * Next serves this at `/robots.txt` only. It does not claim `/robots`, which is
- * why `RESERVED_SLUGS` in lib/chambers.js lists `robots` anyway: without that,
- * a chamber slugged `robots` would sit at a path that reads like infrastructure
+ * why `RESERVED_SLUGS` in lib/slug.js lists `robots` anyway: without that, a
+ * chamber slugged `robots` would sit at a path that reads like infrastructure
  * to anyone who sees it.
  *
  * The honest note on how this composes with the `noindex` in app/layout.jsx:

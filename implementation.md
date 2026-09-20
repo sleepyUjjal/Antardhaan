@@ -149,8 +149,8 @@ Chamber pages appear in no nav, sitemap or manifest. The slug never appears in a
 
 **Chambers sit at the root, not under `/c/`.** `/<slug>` is the URL the participants get, and two things follow from that which the `/c/` prefix would have handled for us:
 
-- **`/[slug]` is now the catch-all for every URL on the domain that no other route claims.** `/.env`, `/wp-login.php`, `/phpmyadmin` all arrive at this route — and without a guard, each one is a query against Neon in Singapore. `SLUG_PATTERN` in `lib/chambers.js` rejects the impossible before the query. Next serves static segments first, so `/admin` and `/standings` never reach here, but nothing else is filtered for us.
-- **`RESERVED_SLUGS` is a C13 requirement, not a nicety.** A chamber slugged `admin` does not error — it silently becomes unreachable, because Next matches the static `app/admin/` route first and `getChamberData` never sees it. C13 validates every slug it saves with `isValidSlug`. Reserving a word costs nothing; discovering the collision mid-event costs a chamber.
+- **`/[slug]` is now the catch-all for every URL on the domain that no other route claims.** `/.env`, `/wp-login.php`, `/phpmyadmin` all arrive at this route — and without a guard, each one is a query against Neon in Singapore. `SLUG_PATTERN` rejects the impossible before the query. Next serves static segments first, so `/admin` and `/standings` never reach here, but nothing else is filtered for us. The pattern and the set now live in `lib/slug.js`; C13 is why.
+- **`RESERVED_SLUGS` is a C13 requirement, not a nicety.** A chamber slugged `admin` does not error — it silently becomes unreachable, because Next matches the static `app/admin/` route first and `getChamberData` never sees it. C13 refuses to save any slug with a `slugProblem`. Reserving a word costs nothing; discovering the collision mid-event costs a chamber.
 
 ---
 
@@ -645,15 +645,53 @@ The scan was otherwise clean: **no code appeared anywhere**, in a tree that incl
 
 ### C13 — `feat(admin): suit codes and hidden slugs`
 
-**Files:** `app/admin/suits/{page,actions}.jsx`, `components/admin/SuitCard.jsx`
+**Files:** `app/admin/(dashboard)/suits/{page.jsx,actions.js}`, `components/admin/SuitCard.jsx`, `lib/slug.js`, `lib/slug.test.js`, `lib/suit-admin.js`, `components/admin/AdminNav.jsx`, `app/admin/(dashboard)/layout.jsx`
 
 - One card per suit, stacked on mobile: label, glyph, current slug, current code, last updated.
 - **Generate code** — new 8-char code, saved, shown immediately with a copy button. Because codes are plain text, you can also reopen this page any time and read them, which is the whole reason for that decision.
 - **Edit slug** — generate a random one or type a thematic one by hand.
-- **Copy chamber URL** — builds the full `<NEXT_PUBLIC_SITE_URL>/<slug>` and copies it, so sending a chamber to a team is one tap from your phone. Refuses to save or copy a slug that `isValidSlug` rejects, and says which rule it broke — a reserved word here is a chamber that would silently never resolve.
+- **Copy chamber URL** — builds the full `<NEXT_PUBLIC_SITE_URL>/<slug>` and copies it, so sending a chamber to a team is one tap from your phone. It always copies the **saved** slug, and Save is disabled while `slugProblem` reports anything — with the rule it broke named underneath the field, because a reserved word here is a chamber that would silently never resolve.
 - **Deactivate** — retires a chamber that leaked, without deleting its submissions.
 
+**Two files were split out, and both splits are the commit.**
+
+1. **`lib/slug.js` — the rules moved out of `lib/chambers.js` so the browser can import them.** The plan above says the card refuses a slug `isValidSlug` rejects, which reads as though the card could just call it. It could not: `lib/chambers.js` imports `db/client.js` and `next/navigation`, so a `'use client'` component importing the rules from there pulls the Neon client into the browser bundle. The alternative — a second copy of the pattern in the card — is the version that goes wrong, because the two drift and the field starts accepting a slug the action then rejects, which presents as a save button that does nothing.
+
+   So the predicates, the pattern, and the reserved set moved to a module with **no imports at all**, and `lib/chambers.js` imports `SLUG_PATTERN` back. There is still exactly one pattern in the project. The reserved set went along with the pattern rather than being split from it, because they answer the same question and `slugProblem` is the single point where the order between them matters.
+
+2. **`lib/suit-admin.js` — the admin reads and writes did not go into `lib/chambers.js`.** That module's header states its central guarantee, and §7 rests on it: it *never selects the code*. Not fetched and filtered, never read. `getSuitConfig` does the opposite, on purpose. Putting it in the same file would not break anything — and that is the problem: the guarantee would quietly stop being true, and a rule you can only check by reading a 200-line file for the one function that misbehaves is a rule that survives on memory. Two files, and the rule is one grep.
+
+   The cost is stated in the module rather than hidden: `getSuitConfig`'s result contains every code, so it must not be spread into a *participant* page's props. It has exactly one caller, `app/admin/(dashboard)/suits/page.jsx`.
+
+**Things worth knowing about how this landed.**
+
+- **A slug collision is a returned result, not a thrown error.** `setSuitSlug` catches Postgres `23505` and returns `{ ok: false, reason: 'taken' }`, following `lib/submissions.js`. Type-a-slug-another-chamber-has is an ordinary thing for a person to do, and it has a sentence. There is no read-then-write: reading first to check would still race with the write it was checking for, so the unique index is the check and the error is the answer.
+
+  `isUniqueViolation` checks **two spellings**, and that is not belt-and-braces: `@neondatabase/serverless` over HTTP raises its own error and hangs the original off `error.cause`, while a direct `pg` connection puts the code on the error itself. Knowing only one of them turns "that slug is taken" into a 500 on whichever deployment used the other.
+
+- **`suggestSlug` generates and does not write.** A Random button that saved would silently re-point a live chamber, and every team holding the old URL would get a 404 — from a single tap, with no confirmation, on the one page you open in a hurry. It fills the field; Save slug is a second, deliberate press; the status line says which one happened. The same reasoning decides what Copy URL copies: the **saved** slug, never the draft, because an unsaved URL is one that does not work.
+
+- **`normalizeSlug` runs on every keystroke, not on submit.** Autocorrect leaves trailing spaces and the keyboard capitalises the first letter of anything, so a field that stored what it was given would reject `The-mirror ` for two reasons the person did not choose. Normalising on the way in also means the string `slugProblem` tests is exactly the string that gets saved — a slug normalised *after* validation is a slug that was validated as something else. `lib/slug.test.js` pins the property that makes this safe: a slug that passes the pattern is already normalised, so normalising is the identity on everything the save button is enabled for.
+
+- **Every action is a direct Server Action call, not a form.** Two of them return a value the card has to render — the new code, and the reason a slug was rejected — and routing that through `useActionState` would be machinery for two buttons. The cost is real and is written down on the page: **this route needs JavaScript.** The console's kill switch and its freeze release do not, and that difference is deliberate — those are the two controls you reach for when something is already wrong, and this is not.
+
+- **`RESERVED_SLUGS` gained `_next`, and the test says out loud that it is unreachable.** A leading underscore fails the shape rule first, so `slugProblem('_next')` is `'shape'` and never `'reserved'`. It stays in the set because the set doubles as the list of what already lives at the root — it is documentation as much as a check — and `lib/slug.test.js` pins that reading down so a later edit cannot reorder the checks and quietly start calling it reserved.
+
+- **`NEXT_PUBLIC_SITE_URL` is read in the page, not in the card.** `lib/env.js` is a server module: it also reads `DATABASE_URL` and `SESSION_SECRET`, and importing it from a client component to get at one public string would put the other two getters in the browser bundle. The page resolves the URL and passes the string down.
+
+- **`getSuitConfig` throws unless it finds all five rows**, matching `lib/event.js` and `lib/chambers.js`. Four rows is worse than zero: a console listing four chambers looks like it is working, and the missing one stays invisible until a team cannot play it. The count is checked against `SUIT_KEYS.length` rather than the literal `5`, so adding a suit to `lib/suits.js` and to the schema without seeding it is caught here.
+
+- **One file beyond the plan's list: `components/admin/AdminNav.jsx`.** This is the third page under `/admin` and the first commit where typing URLs stopped being a reasonable way to move between them — the surface is a phone at a venue, and a phone has no address bar you would want to type into twice. It is a client component for one reason (`usePathname`) and marks the current page with `aria-current="page"` as well as a colour.
+
+  Its rule cost a second pass. The obvious test is "the pathname is this, or is beneath it", which is right for a section and **wrong for `/admin`, because `/admin` is a prefix of the other two** — so the plain version lights up Console on `/admin/suits` and `/admin/glitch`, i.e. on every page it exists to distinguish between, and the nav looks like it is working because something is always underlined. The three entries are siblings, so `/admin` carries an `exact` flag and the prefix half applies only to the others (where C14's sub-routes will want it). Nothing catches this: it is a wrong-looking-right bug in a file no test covers, and the only reason it is not shipping is that the comment claiming the behaviour was checked against the code.
+
+  It also cost the layout a change: the nav sits in a wrapper **outside** the `<Container>`, so the rule under it runs full-bleed and lands on the same edges as the header's. Inside, `Container`'s `px-5 sm:px-8` would inset it by 20 px and two rules 44 px apart would disagree about where the page ends, which reads as a mistake because it is one.
+
+- **A stale cross-reference was corrected:** `lib/code.js` said its slugs fit `SLUG_PATTERN` "in lib/chambers.js". It now names `lib/slug.js` and states the invariant the seed depends on — the alphabet is lowercase letters and digits only, so a generated slug can never fail the shape rule and can never land on a reserved word. `lib/slug.test.js` asserts it over 500 draws rather than leaving it in a comment in two files.
+
 **Done when:** rotating a code invalidates the old one immediately, and `navigator.clipboard` works over HTTPS on a phone.
+
+**Not yet observed running.** As with C12, no build, lint, or test has completed since C8 — the environment reason is in C10. Everything in this commit is hand-traced. The clipboard fallback is also the one path here that cannot be checked from a desk: `navigator.clipboard` is undefined outside a secure context, so it works on the deployed site and not on `http://<lan-ip>:3000`, which is exactly why the failure branch says "select it and copy" rather than throwing — both readouts are `select-all` for that reason.
 
 ---
 
@@ -758,6 +796,6 @@ C1 → C2 → C3 → C4 ─┐
 2. **Overall tie-break.** Currently most suits solved, then least total elapsed. If you'd rather weight by suit difficulty, that's a small change in one query.
 3. **Public standings.** C15 builds `/standings`. Say the word and it comes out, or gets put behind a code.
 4. **Repeat visits.** A team can solve each suit once. If chambers should be re-enterable, the unique constraint is the one thing to revisit.
-5. **Codes from physical clue cards.** If codes are printed before the site is built, C13 needs a "type an existing code" path alongside generate.
+5. **Codes from physical clue cards.** If codes are printed before the site is built, C13 needs a "type an existing code" path alongside generate. **C13 shipped without it** — the page rotates and reads codes, and the only way a code enters the table is `generateCode()`. If the codes are going on cards, that is a second input on the card next to "Generate a new code", and the question to settle first is whether the printed code or the row is the system of record when the two disagree: rotating a printed code would invalidate the card in someone's hand, and the page currently warns about that in the only way it can — the note under the button.
 6. **Landing copy.** `META.tagline` in `components/landing/EventMeta.jsx` is a placeholder — *"What disappears does not always leave."* — and the landing page carries no date and no venue. Both are one-line edits in one object, and both are deliberate: inventing a date would have been worse than leaving it out.
 7. **How far the glitch controller reaches.** C12 publishes tuning to every device via `/api/glitch`. If you would rather each device kept its own settings, the endpoint and the fetch come out and it stays a local bench — but the `hold` is the part that genuinely has to be global, so that half stays either way.

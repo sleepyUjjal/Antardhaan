@@ -1,3 +1,4 @@
+import { AdminNav } from '@/components/admin/AdminNav'
 import { Container } from '@/components/ui/Container'
 import { logout } from '../actions'
 
@@ -10,7 +11,7 @@ import { logout } from '../actions'
  * out" button on the login page and a console header above a form whose entire
  * job is to be the one screen with nothing else on it. The group declares its own
  * layout for the logged-in pages only, and changes no URL: `/admin` is still
- * `/admin`, and C12's tuning page and C15's boards drop in beside this file
+ * `/admin`, and C12's tuning page and C13's suit cards drop in beside this file
  * rather than needing each other's chrome restated.
  *
  * `force-dynamic` is declared here rather than on each page because every page in
@@ -26,7 +27,7 @@ export default function AdminDashboardLayout({ children }) {
     <div className="flex min-h-dvh flex-col">
       {/* Not sticky. A sticky header on a notched phone has to clear
           `env(safe-area-inset-top)` and needs a matching page gutter, and this
-          console is two short screens that never scroll far enough for it to
+          console is three short screens that never scroll far enough for it to
           matter — the panels below are the content. */}
       <header className="border-b border-rule">
         <Container className="flex items-center justify-between gap-4 py-3">
@@ -51,6 +52,21 @@ export default function AdminDashboardLayout({ children }) {
           </form>
         </Container>
       </header>
+
+      {/* Outside the main Container rather than inside it, so the rule under the
+          nav runs the full width of the screen and lands on the same edges as the
+          header's. Inside, Container's `px-5 sm:px-8` would inset it by 20px and
+          the two rules 44px apart would disagree about where the page ends —
+          which reads as a mistake, because it is one.
+
+          Above the page title rather than below it: this is orientation, and a
+          console with three pages that says which one you are on before it says
+          what the page is called reads in the right order. */}
+      <div className="border-b border-rule">
+        <Container>
+          <AdminNav />
+        </Container>
+      </div>
 
       <Container as="main" className="flex-1 pt-6 pb-16">
         {children}
