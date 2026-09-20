@@ -557,7 +557,7 @@ The scan was otherwise clean: **no code appeared anywhere**, in a tree that incl
 
 ### C11 — `feat(admin): dashboard, start time, and the kill switch`
 
-**Files:** `app/admin/{page,layout,actions}.jsx`, `components/admin/{StartTimeForm,StatCards}.jsx`, `lib/event.js`
+**Files:** `app/admin/actions.js`, `app/admin/(dashboard)/{layout,page}.jsx`, `components/admin/{StartTimeForm,StatCards}.jsx`, `lib/event.js`
 
 - Start time as a `datetime-local` input, stored as `timestamptz`. Server Action, `revalidatePath('/admin')`.
 - `submissions_open` as a labelled kill switch — not gating (per your call), but the thing you flip if a chamber leaks or something breaks mid-event.
@@ -566,6 +566,22 @@ The scan was otherwise clean: **no code appeared anywhere**, in a tree that incl
 - The start-time control shows the resulting elapsed time for the current leader *live*, so you can see the effect of an edit before saving it.
 
 **Done when:** changing the start time updates every elapsed time on the board without touching a submission row.
+
+**Six things worth knowing about how this landed.**
+
+1. **The dashboard is a route group — `app/admin/(dashboard)/` — and the parentheses are load-bearing.** A layout at `app/admin/layout.jsx` wraps every segment beneath it, which includes `/admin/login`: the login page would grow a console header and a "Log out" button, and the one screen on the site whose whole job is to have nothing else on it would stop being that. The group scopes the chrome to the logged-in pages and changes no URL. C12's tuning page and C15's boards drop in beside it and inherit it.
+
+2. **The start-time control is a client component because a `datetime-local` value has no timezone in it, and the server cannot supply one.** The input holds a wall-clock string; what the database stores is an absolute instant (`timestamptz`). Nothing in the string says which offset applies, and a Server Action parsing `2026-09-20T18:30` resolves it against the *server's* timezone — UTC on Vercel — so a start time of 18:30 at the venue is stored as 00:00 and every elapsed time on every board is wrong by five and a half hours. The fix is that the visible input carries **no `name`** and a hidden input next to it carries `inputValueToIso(value)`: the browser does the conversion, because the browser is the only party that knows what the offset was. `lib/format.js` gained both halves (`toLocalInputValue`, `inputValueToIso`) and they are the third and fourth functions in that file that must not run during server rendering.
+
+3. **The input's initial value comes from `useSyncExternalStore`, not from a mount effect.** The stored instant has to be rendered as this device would write it, and the server has no idea which timezone that is — so a server-rendered value is a hydration mismatch on a field React will not repair, showing UTC to someone who is not in UTC. `useSyncExternalStore(subscribeNoop, () => toLocalInputValue(iso), () => '')` is the sanctioned shape for exactly this: server snapshot for the hydration render, real one immediately after. The mount-effect-plus-setState version is rejected outright by `react-hooks/set-state-in-effect`, the same rule GlitchProvider documents. Cost is one frame with an empty field.
+
+4. **The form owns a draft value, and there is deliberately no `key` on it.** The plan at one point had the page pass `key={startIso}` so a save would remount the form and clear the field — that is wrong twice over. A draft that wins once you type keeps the field showing what you typed across the revalidation the save triggers, which is what the save should feel like; and a key would remount the component the instant its confirmation message appeared, so the message would never be read. `null` means "untouched, follow the stored value".
+
+5. **The logout button is hand-rolled; the kill switch is `components/ui/Button`.** Not an inconsistency. `Button` bakes in `w-full`, which is right for a form's submit in a narrow column and wrong in a header row next to a title — and `lib/cn.js` joins rather than merges, so a width passed in to undo it would be settled by Tailwind's emission order rather than by intent. The rule is not "never use Button here", it is "do not pass Button a class that fights one it already has". Both controls clear 44px for a thumb.
+
+6. **`force-dynamic` is declared once, on the group's layout.** Every page in the group is the same kind of page — a live read of a database that changes while you are looking at it — so it belongs on the segment that owns them rather than repeated on each. A statically rendered console would show build-time numbers at the venue, which is the worst way for this surface to fail: plausible and wrong. **Check the build output for `/admin` as `ƒ` rather than `○`** — if it ever renders as static, the segment config did not inherit and each page needs its own line.
+
+**Three things deliberately not built.** There is no control for editing or deleting a submission: a solve is a fact a team earned, and if one is wrong the start time was wrong, so the fix belongs in the field above rather than in a delete button that rewrites history. StatCards' "running for" is stale the moment it is sent — correct, because the page is `force-dynamic` and a server-rendered tick would need a client island holding a clock for a number the reader can round in their head; the live board is C15. And the kill switch posts the state to move *to*, not the state we are in, so a submit from a stale page in a second tab is a no-op instead of a silent flip back.
 
 ---
 
