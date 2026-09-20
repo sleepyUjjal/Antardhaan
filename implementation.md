@@ -524,14 +524,34 @@ The scan was otherwise clean: **no code appeared anywhere**, in a tree that incl
 
 **Goal:** only you reach `/admin`.
 
-**Files:** `app/admin/login/{page,actions}.jsx`, `lib/session.js`, `middleware.js`
+**Files:** `app/admin/login/{page.jsx,actions.js}`, `components/admin/LoginForm.jsx`, `lib/{session,password}.js`, `proxy.js`, `components/glitch/GlitchProvider.jsx`, `lib/{glitch,glitch.test}.js`
 
 - Login form → compare against `ADMIN_PASSWORD`. The comparison uses `timingSafeEqual` from `node:crypto` — one line, no dependency, no ceremony.
 - Session: a `jose` HS256 JWT in an HttpOnly + Secure + SameSite=Lax cookie, 12 h expiry, signed with `SESSION_SECRET`. A signed cookie rather than storing the password in it, which is the one shortcut worth not taking.
 - `middleware.js` guards `/admin/:path*`, redirecting to login. Edge-safe, so keep it free of database imports.
 - Login page styled with the same tokens but **the oscillator off** — you'll be reading this at 1 a.m. with 30% battery, and it should not fight you.
 
+**Five ways this came out different from the brief above, and why.**
+
+1. **`middleware.js` became `proxy.js`, and the rename is more than a rename.** Next 16 renamed the convention — the codemod is `middleware-to-proxy` — so `middleware.js` still runs but warns on every dev boot and every build, and the build refuses outright if both files exist. The export has to be renamed with the file: the entry template does `mod.proxy || mod.default`, so a `proxy.js` exporting `middleware` throws *"must export a function named `proxy`"*. What makes it more than cosmetic is in `entries.js`: `runDependingOnPageType` sends a proxy file to `onServer()` unconditionally, where a middleware file goes to the edge unless it opts out. **The whole of this commit was first written on the assumption that the guard runs on the edge. It does not, and the code was simpler once that was known** — see below. `config.matcher` survived intact (`get-page-static-info.js` reads it for either filename), so the guard is still scoped to `/admin` and nothing else.
+
+2. **The auth code is two files, and the reason for that changed mid-commit.** It was written while the guard was edge-bound, where `node:crypto` does not resolve — so the JWT and the password comparison could not share a module, and `lib/session.js` read `process.env.SESSION_SECRET` as a *literal* member expression rather than through `lib/env.js`, because only the written-out form gets substituted into a bundle and the dynamic `process.env[name]` form depends on a runtime `process.env` an edge bundle is not guaranteed to have. On Node, both of those are non-issues and the file now reads the secret the way everything else in the project does. The two files stay split for the reason that never depended on the runtime: `verifyPassword` cannot live in the action file, because a `'use server'` module turns every export into a publicly callable endpoint, and a callable password comparison is worse than the thing it protects. The guard also imports `lib/session.js` on every `/admin` request and has no use for a comparison it never calls.
+
+3. **`verifyPassword` hashes both sides before comparing, and that is the opposite call from `codesMatch` in `lib/submissions.js`.** That one checks lengths first and says why: a suit code is 8 characters from a published alphabet, so its length is public. A password's is not. `timingSafeEqual` throws on a length mismatch, so the "obvious" fix — check lengths, then compare — returns on the first byte for nearly every wrong guess, which is both a shorter path than a correct guess and an oracle for the password's length. Hashing to 32 bytes first makes the inputs the same length by construction.
+
+4. **The "oscillator off" requirement needed a change to the provider, and there is no way around that.** `GlitchProvider` lives in the root layout, which has no per-route props, and nesting a second provider under it does not work — both would write `data-mode` onto `<html>` and fight over it every few seconds. So the provider now reads `usePathname()` and takes the route as a fourth input alongside reduced motion and tab visibility, via `isStillRoute` in `lib/glitch.js`, which holds `/admin` and locks it to bad mode. Bad mode rather than whatever you arrived in, following the two precedents already in the project: reduced motion locks to bad, and `opengraph-image.jsx` is permanently bad because "a mode that flips every few seconds has no single frame to freeze".
+   - `/admin/glitch` is carved out of the hold in advance. C12 puts the tuning knobs there, and a held tuning page is a page that lies: you would drag a knob, nothing would move, and you would conclude the publish path was broken. Reserved the same way `RESERVED_SLUGS` reserves words for routes that do not exist yet.
+   - `lib/glitch.test.js` starts here with the `isStillRoute` cases, including the prefix-boundary one (`/administrator` must not be held). C12 extends it.
+
+5. **No `?next=` parameter.** Carrying the destination through the login means validating it on the way back, and anything unvalidated there is an open redirect. Sessions last twelve hours, there is one user, and you log in once at the start of the evening — that is not worth an allowlist. The redirect drops the query string.
+
+**Two things deliberately not built.** There is no rate limit or lockout on the login: the control is that `ADMIN_PASSWORD` is generated at 24+ characters, and a per-instance counter in a serverless function counts nothing. And there is no logout in this commit — it belongs with the dashboard shell in C11, and without it the login page stays reachable while logged in, which is the right behaviour while there is no way out.
+
+**Also worth knowing before the first build:** `secure: true` on the cookie is conditional on `NODE_ENV === 'production'`. Not a weakening — production is HTTPS and production gets the flag. It is because Safari silently discards a `Secure` cookie over plain `http://localhost`, so the login would appear to succeed and then bounce back to the form with no error, which is a bad hour to lose.
+
 **Done when:** `/admin` redirects when logged out, the cookie is invisible to `document.cookie`, and the login page is usable one-handed.
+
+**A note that was written before the build ran, and is now moot — kept because the rule it states is not.** While this file was `middleware.js` on the edge, there was a real chance the audit would report `SESSION_SECRET` or `ADMIN_PASSWORD` inside `.next/server/…`, because a compiler inlining `process.env` into an edge bundle writes the value into the artifact. On the Node runtime the value is a runtime lookup instead, the way `DATABASE_URL` has always been, so this should not happen. If it does anyway, read the path before reacting: a secret in `.next/server/…` is a server bundle that is never sent to a browser, which is a different finding from a slug in `.next/static/…`, and the audit should learn to say which it is rather than being waved past.
 
 ---
 
@@ -542,6 +562,7 @@ The scan was otherwise clean: **no code appeared anywhere**, in a tree that incl
 - Start time as a `datetime-local` input, stored as `timestamptz`. Server Action, `revalidatePath('/admin')`.
 - `submissions_open` as a labelled kill switch — not gating (per your call), but the thing you flip if a chamber leaks or something breaks mid-event.
 - Stat cards: total submissions, teams on the board, suits solved out of five, time since start. Laid out two-up on a phone, four-up on desktop.
+- **Logout lands here**, in `app/admin/actions.js` with the button in the new layout. C10 built the cookie and left it without a way to clear it, deliberately: the 12 h expiry is the only exit until this exists, and `lib/session.js` already exports everything the action needs.
 - The start-time control shows the resulting elapsed time for the current leader *live*, so you can see the effect of an edit before saving it.
 
 **Done when:** changing the start time updates every elapsed time on the board without touching a submission row.
@@ -555,6 +576,7 @@ The scan was otherwise clean: **no code appeared anywhere**, in a tree that incl
 **Files:** `app/admin/glitch/{page,actions}.jsx`, `components/admin/GlitchKnobs.jsx`, `app/api/glitch/route.js`, `components/glitch/GlitchProvider.jsx`, `lib/glitch.js`, `lib/glitch.test.js`, `app/admin/page.jsx` (the active-hold banner), and `/dev/glitch` is deleted
 
 - **This is C3's `/dev/glitch` panel promoted into the admin and made to persist.** The knobs are the same; what changes is that they no longer live and die in React state. `/dev/glitch` is deleted in this commit — it was a public route with no auth, and keeping a second copy of the same controls is a maintenance tax with no upside.
+- `lib/glitch.test.js` already exists — C10 started it for `isStillRoute`. Extend it with the tuning cases below; do not replace it.
 - The value is a partial override in `event.glitch` (jsonb, §3). `{}` means "use the build defaults", so **Reset writes `{}`, not a copy of the defaults** — that is the entire reason it is a partial override rather than a snapshot. A knob added in a later commit needs no backfill, and an edit to `TUNING_DEFAULTS` still reaches every device that has not overridden it.
 - **`sanitizeTuning(input)` in `lib/glitch.js` is the security boundary of this commit.** It is the point where a jsonb value becomes a CSS custom property on every visitor's device: an allowlist of known keys, each clamped to its range, everything else dropped. Apply it on write *and* on read — the read side is what stops one bad row from reaching 500 phones at once. `lib/glitch.test.js` covers clamping, unknown-key rejection, and non-numeric input.
 - `/api/glitch` serves tuning only — never a code, never a slug — with `Cache-Control: public, max-age=60, s-maxage=60, stale-while-revalidate=300`. `max-age` as well as `s-maxage` so a repeat navigation is a browser cache hit and costs nothing at all.

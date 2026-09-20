@@ -1,5 +1,6 @@
 'use client'
 
+import { usePathname } from 'next/navigation'
 import {
   createContext,
   useCallback,
@@ -12,6 +13,7 @@ import {
 import {
   TIMING,
   TUNING_DEFAULTS,
+  isStillRoute,
   nextFlipDelay,
   nextSignalLossDelay,
   otherMode,
@@ -73,9 +75,22 @@ export function GlitchProvider({ children, initialMode = 'bad', tuning: tuningPr
   )
   const hidden = useSyncExternalStore(subscribeVisibility, getHidden, getFalseOnServer)
 
-  const active = !reducedMotion && !hidden
-  // Derived, not set from an effect. Reduced motion locks the page to 'bad'.
-  const effectiveMode = reducedMotion ? 'bad' : mode
+  // The route is the fourth input, alongside reduced motion and tab visibility.
+  // It is read here rather than passed down because the provider lives in the
+  // root layout, which has no per-route props — and because a second provider
+  // nested under this one would not work: both would write `data-mode` onto
+  // <html> and they would fight over it every few seconds.
+  //
+  // `usePathname` returns the pathname during SSR as well, so the server and the
+  // first client render agree and this does not cause a hydration mismatch.
+  const pathname = usePathname()
+  const still = isStillRoute(pathname)
+
+  const active = !reducedMotion && !hidden && !still
+  // Derived, not set from an effect. Reduced motion locks the page to 'bad', and
+  // a held oscillator does the same — see isStillRoute for why bad is the frame
+  // a page with no flip loop should freeze on.
+  const effectiveMode = reducedMotion || still ? 'bad' : mode
 
   useEffect(() => {
     document.documentElement.dataset.mode = effectiveMode
