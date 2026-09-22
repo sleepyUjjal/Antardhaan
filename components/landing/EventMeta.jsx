@@ -1,4 +1,5 @@
 import { GlitchText } from '@/components/glitch/GlitchText'
+import { HeroMark } from '@/components/landing/HeroMark'
 import { Container } from '@/components/ui/Container'
 import { Stack } from '@/components/ui/Stack'
 import { cn } from '@/lib/cn'
@@ -40,7 +41,10 @@ export function EventMeta({ className }) {
             dots. */}
         <div aria-hidden="true" className="halftone h-3 text-accent-text opacity-60" />
 
-        <p className="max-w-[32ch] text-lg">{META.tagline}</p>
+        <div className="hero-meta-tagline-row">
+          <p className="max-w-[32ch] text-lg">{META.tagline}</p>
+          <HeroMark className="hero-mark-in-meta" />
+        </div>
       </Stack>
     </Container>
   )

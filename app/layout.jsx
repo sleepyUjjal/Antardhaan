@@ -1,6 +1,7 @@
 import { Anton, Archivo, JetBrains_Mono } from 'next/font/google'
 import { GlitchOverlay } from '@/components/glitch/GlitchOverlay'
 import { GlitchProvider } from '@/components/glitch/GlitchProvider'
+import icon from './image.webp'
 import './globals.css'
 
 // Self-hosted at build time, so no runtime request to Google and no layout
@@ -50,6 +51,10 @@ export const metadata = {
   // This is a different arrival from `Disallow: /` in app/robots.js, not a
   // second layer on the same one — see the note in that file.
   robots: { index: false, follow: false },
+  icons: {
+    icon: [{ url: icon.src, type: 'image/webp', sizes: `${icon.width}x${icon.height}` }],
+    apple: [{ url: icon.src, type: 'image/webp' }],
+  },
 }
 
 // viewportFit: 'cover' is what makes env(safe-area-inset-*) resolve to real

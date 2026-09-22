@@ -24,8 +24,8 @@ export default function Home() {
       <Hero>
         <HeroGround />
       </Hero>
-      <EventMeta />
-      <Footer />
+      <EventMeta className="relative z-[1] shrink-0" />
+      <Footer className="shrink-0" />
     </main>
   )
 }

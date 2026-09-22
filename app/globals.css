@@ -551,6 +551,75 @@
     z-index: 0;
   }
 
+  /* The mark: shared paint rules; placement lives on -in-hero / -in-meta. */
+  .hero-mark {
+    height: auto;
+    max-width: none;
+    aspect-ratio: 6 / 1;
+    object-fit: cover;
+    object-position: center;
+    filter: invert(1);
+    pointer-events: none;
+  }
+
+  :root[data-mode='good'] .hero-mark {
+    filter: none;
+  }
+
+  /* Phone: 2× the original clamp(5rem, 26vw, 9.5rem). Above the figure
+     (z-index 10) so short heroes — iPhone SE — do not bury the mark. */
+  .hero-mark-in-hero {
+    position: absolute;
+    top: max(1.25rem, env(safe-area-inset-top, 0px));
+    left: 50%;
+    translate: -50% 0;
+    width: clamp(10rem, 52vw, 19rem);
+    z-index: 20;
+  }
+
+  /* Tablet: 1.5× the original size. */
+  @media (min-width: 768px) and (max-width: 63.999rem) {
+    .hero-mark-in-hero {
+      width: clamp(7.5rem, 39vw, 14.25rem);
+    }
+  }
+
+
+
+  /* Desktop: hero mark off, meta mark on — in CSS so it cannot lose to
+     Tailwind display utilities on the <img>. */
+  @media (min-width: 64rem) {
+    .hero-mark-in-hero {
+      display: none !important;
+    }
+  }
+
+  .hero-meta-tagline-row {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+
+  .hero-mark-in-meta {
+    display: none;
+    flex-shrink: 0;
+    width: clamp(9rem, 18vw, 15rem);
+  }
+
+  @media (min-width: 64rem) {
+    .hero-meta-tagline-row {
+      flex-direction: row;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 2.5rem;
+      width: 100%;
+    }
+
+    .hero-mark-in-meta {
+      display: block !important;
+    }
+  }
+
   /* The figure: the poster's character, standing on the bottom edge of the hero
      with its crown crossing the wordmark, and standing in front of it.
 

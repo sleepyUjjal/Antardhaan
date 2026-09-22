@@ -4,6 +4,7 @@ import { GlitchText } from '@/components/glitch/GlitchText'
 import { useGlitch } from '@/components/glitch/GlitchProvider'
 import { useScramble } from '@/components/glitch/useScramble'
 import { HeroFigure } from './HeroFigure'
+import { HeroMark } from './HeroMark'
 
 const LOCKUP = 'ANTARDHAAN'
 
@@ -61,7 +62,7 @@ export function Hero({ children }) {
     // figure's height as a share of this section. Both the figure and the
     // lockup read it; globals.css explains why they share it rather than each
     // picking their own percentage.
-    <section className="hero-stage relative isolate flex-1 overflow-hidden bg-bg">
+    <section className="hero-stage relative isolate min-h-0 flex-1 overflow-hidden bg-bg">
       {children}
 
       {/* The lockup is positioned rather than laid out, and it is the one thing
@@ -85,6 +86,9 @@ export function Hero({ children }) {
       </div>
 
       <HeroFigure />
+
+      {/* After the figure in DOM, and above it in z-index — see globals.css. */}
+      <HeroMark className="hero-mark-in-hero" />
     </section>
   )
 }
