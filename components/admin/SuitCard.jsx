@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react'
 import { Button } from '@/components/ui/Button'
 import { Rule } from '@/components/ui/Rule'
 import { normalizeSlug, slugProblem, slugProblemText } from '@/lib/slug'
+import { normalizeCode, codeProblem, codeProblemText } from '@/lib/code'
 
 /**
  * One chamber, and everything you can do to it.
@@ -35,9 +36,10 @@ import { normalizeSlug, slugProblem, slugProblemText } from '@/lib/slug'
  *   code: string,
  *   isActive: boolean,
  *   siteUrl: string,
- *   rotate: (suit: string) => Promise<{ ok: boolean, code?: string }>,
  *   suggest: () => Promise<{ ok: boolean, slug?: string }>,
  *   save: (suit: string, slug: string) => Promise<{ ok: boolean, reason?: string }>,
+ *   suggestCode: () => Promise<{ ok: boolean, code?: string }>,
+ *   saveCode: (suit: string, code: string) => Promise<{ ok: boolean, reason?: string, code?: string }>,
  *   setActive: (suit: string, isActive: boolean) => Promise<{ ok: boolean }>,
  * }} props
  */
@@ -55,9 +57,10 @@ export function SuitCard({
   code,
   isActive,
   siteUrl,
-  rotate,
   suggest,
   save,
+  suggestCode,
+  saveCode,
   setActive,
 }) {
   const [pending, startTransition] = useTransition()
@@ -68,6 +71,12 @@ export function SuitCard({
   // page — needs no reset: a successful save returns the normalised value, which
   // is what the draft already holds, so they agree by construction.
   const [draft, setDraft] = useState(slug)
+  const [draftCode, setDraftCode] = useState(code)
+
+  const codeProb = codeProblem(draftCode)
+  const codeDirty = draftCode !== code
+  const codeProbText = codeProblemText(codeProb)
+
 
   // Normalised as you type, which is not a nicety on a phone. Autocorrect adds
   // trailing spaces and the keyboard capitalises the first letter of anything, so
@@ -96,14 +105,29 @@ export function SuitCard({
     }
   }
 
-  function rotateNow() {
+  function suggestCodeNow() {
     startTransition(async () => {
-      const result = await rotate(suit)
-      setStatus(
-        result?.ok
-          ? { ok: true, text: 'New code saved. The old one stopped working immediately.' }
-          : { ok: false, text: 'That did not save. Check the connection and try again.' },
-      )
+      const result = await suggestCode()
+      if (!result?.ok) {
+        setStatus({ ok: false, text: 'Could not generate one. Check the connection and try again.' })
+        return
+      }
+      setDraftCode(result.code)
+      setStatus({ ok: true, text: 'Generated. Nothing is saved until you press Save code.' })
+    })
+  }
+
+  function saveCodeNow() {
+    startTransition(async () => {
+      const result = await saveCode(suit, draftCode)
+      if (result?.ok) {
+        setStatus({ ok: true, text: 'Code saved. The old code stopped working immediately.' })
+        return
+      }
+      setStatus({
+        ok: false,
+        text: codeProblemText(result?.reason) ?? 'That did not save. Check the connection and try again.',
+      })
     })
   }
 
@@ -200,19 +224,40 @@ export function SuitCard({
         </div>
 
         <div>
-          <p className={LABEL}>Code</p>
-          <p className={`mt-2 ${READOUT} tracking-[0.3em]`}>{code}</p>
+          <label className="flex flex-col gap-2">
+            <span className={LABEL}>Code</span>
+            <input
+              value={draftCode}
+              onChange={(event) => setDraftCode(normalizeCode(event.target.value))}
+              autoComplete="off"
+              autoCapitalize="characters"
+              autoCorrect="off"
+              spellCheck={false}
+              enterKeyHint="done"
+              className="border border-rule bg-transparent px-4 py-3 font-mono text-fg tracking-[0.3em]"
+            />
+          </label>
+
+          {codeProb && codeDirty ? <p className="mt-2 text-sm text-accent-text">{codeProbText}</p> : null}
+
           <div className="mt-3 flex flex-wrap gap-3">
             <Button variant="ghost" className="sm:w-auto" onClick={() => copy(code, 'code')}>
               Copy code
             </Button>
-            <Button variant="ghost" className="sm:w-auto" onClick={rotateNow} disabled={pending}>
-              Generate a new code
+            <Button variant="ghost" className="sm:w-auto" onClick={suggestCodeNow} disabled={pending}>
+              Random
+            </Button>
+            <Button
+              variant="ghost"
+              className="sm:w-auto"
+              onClick={saveCodeNow}
+              disabled={pending || codeProb !== null || !codeDirty}
+            >
+              {codeDirty ? 'Save code' : 'Saved'}
             </Button>
           </div>
           <p className="mt-3 text-sm text-muted">
-            The old code stops working the moment this saves. There is no going back to it — if you
-            need it again, generate another.
+            The old code stops working the moment this saves. There is no going back to it.
           </p>
         </div>
 

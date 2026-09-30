@@ -3,7 +3,7 @@ import { Rule } from '@/components/ui/Rule'
 import { env } from '@/lib/env'
 import { getSuitConfig } from '@/lib/suit-admin'
 import { SUIT_LIST } from '@/lib/suits'
-import { rotateCode, saveSlug, setActive, suggestSlug } from './actions'
+import { saveSlug, saveCode, setActive, suggestSlug, suggestCode } from './actions'
 
 /**
  * The five chambers, and the four things you can do to each.
@@ -60,9 +60,10 @@ export default async function SuitsPage() {
               code={row.code}
               isActive={row.isActive}
               siteUrl={siteUrl}
-              rotate={rotateCode}
+              suggestCode={suggestCode}
               suggest={suggestSlug}
               save={saveSlug}
+              saveCode={saveCode}
               setActive={setActive}
             />
           )

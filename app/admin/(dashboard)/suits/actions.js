@@ -21,7 +21,7 @@
  * but *not* saved: you get to see it before it becomes a live URL.
  */
 import { revalidatePath } from 'next/cache'
-import { generateCode, generateSlug } from '@/lib/code'
+import { generateCode, generateSlug, normalizeCode, codeProblem } from '@/lib/code'
 import { normalizeSlug, slugProblem } from '@/lib/slug'
 import { setSuitActive, setSuitCode, setSuitSlug } from '@/lib/suit-admin'
 import { SUIT_KEYS } from '@/lib/suits'
@@ -135,4 +135,21 @@ export async function setActive(suit, isActive) {
   revalidateSuits()
 
   return { ok: true }
+}
+
+export async function saveCode(suit, rawCode) {
+  if (!isSuit(suit)) return { ok: false }
+
+  const code = normalizeCode(rawCode)
+  const problem = codeProblem(code)
+  if (problem) return { ok: false, reason: problem }
+
+  await setSuitCode(suit, code)
+  revalidateSuits()
+
+  return { ok: true, code }
+}
+
+export async function suggestCode() {
+  return { ok: true, code: generateCode() }
 }
